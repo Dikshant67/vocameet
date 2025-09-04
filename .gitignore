@@ -1,0 +1,4 @@
+.exe
+backend/config/credentials.json
+backend/src/token.json
+server/livekit-server.exe
