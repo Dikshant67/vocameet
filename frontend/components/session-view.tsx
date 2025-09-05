@@ -18,6 +18,7 @@ import { useDebugMode } from '@/hooks/useDebug';
 import type { AppConfig } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
+
 function isAgentAvailable(agentState: AgentState) {
   return agentState == 'listening' || agentState == 'thinking' || agentState == 'speaking';
 }
@@ -89,7 +90,8 @@ export const SessionView = ({
   };
 
   return (
-    <section
+    <div >
+ <section
       ref={ref}
       inert={disabled}
       className={cn(
@@ -173,6 +175,10 @@ export const SessionView = ({
           <div className="from-background border-background absolute top-0 left-0 h-12 w-full -translate-y-full bg-gradient-to-t to-transparent" />
         </motion.div>
       </div>
+
     </section>
+
+    </div>
+   
   );
 };

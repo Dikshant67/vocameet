@@ -8,10 +8,12 @@ import { toastAlert } from '@/components/alert-toast';
 import { SessionView } from '@/components/session-view';
 import { Toaster } from '@/components/ui/sonner';
 import { Welcome } from '@/components/welcome';
+import UpcomingMeetings from '@/components/upcoming-meetings';
 import useConnectionDetails from '@/hooks/useConnectionDetails';
 import type { AppConfig } from '@/lib/types';
 
 const MotionWelcome = motion.create(Welcome);
+const MotionMeetings = motion.create(UpcomingMeetings);
 const MotionSessionView = motion.create(SessionView);
 
 interface AppProps {
@@ -107,6 +109,12 @@ export function App({ appConfig }: AppProps) {
           }}
         />
       </RoomContext.Provider>
+
+      {/* Always-visible upcoming meetings panel */}
+      <MotionMeetings   disabled={sessionStarted}  key="meetings" initial={{ opacity: 1 }}
+  animate={{ opacity: sessionStarted ? 0 : 1 }}
+  transition={{ duration: 0.5, ease: 'linear', delay: sessionStarted ? 0 : 0.5 }}
+         />
 
       <Toaster />
     </main>
