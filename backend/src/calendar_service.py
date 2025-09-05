@@ -40,11 +40,12 @@ class CalendarService:
 
     def create_meeting(self, summary: str, start_time: str, end_time: str, attendees: list[str],timezone : str):
         """Create a new calendar meeting."""
+        cleaned_attendees = [email.replace(' ', '') for email in attendees]
         event = {
             "summary": summary,
             "start": {"dateTime": start_time, "timeZone": timezone},
             "end": {"dateTime": end_time, "timeZone": timezone},
-            "attendees": [{"email": email} for email in attendees],
+            "attendees": [{"email": email} for email in cleaned_attendees],
         }
         created_event = self.service.events().insert(calendarId="primary", body=event).execute()
         return created_event.get("id"), created_event.get("htmlLink")

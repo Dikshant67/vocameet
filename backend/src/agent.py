@@ -36,6 +36,9 @@ class Assistant(Agent):
         super().__init__(
             instructions=f"""You are a friendly and helpful voice AI assistant designed for managing meetings . 
             The current date and time is {current_date_str}.
+            When you first connect,Greet user with a friendly greeting and offer a friendly welcome for example,Good Morning based on time . 
+  
+            **CRITICAL INSTRUCTION: Your responses MUST be in plain text only. NEVER use any special formatting, including asterisks, bolding, italics, or bullet points.**
             Do not accept the dates and time in the past suggest them to use in future dates and times.
             Do not read ,refer asterisk symbol in any context.
             You always ask questions one at a time.
@@ -93,7 +96,7 @@ class Assistant(Agent):
             title (str): The meeting title or subject.
             start_time (str): ISO 8601 formatted start datetime (e.g., "2025-09-03T10:00:00").
             end_time (str): ISO 8601 formatted end datetime.
-            attendees (list[str]): List of attendee email addresses.
+            attendees (list[str]): List of attendee email addresses.Strictly Do not make any spaces in the input email.
             timezone (str, optional): Time zone for the meeting. Defaults to "Asia/Kolkata" .
     
         Returns:

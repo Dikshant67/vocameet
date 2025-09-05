@@ -7,8 +7,7 @@ interface AppLayoutProps {
 }
 
 export default async function AppLayout({ children }: AppLayoutProps) {
-  const hdrs = await headers();
-  const { companyName, logo, logoDark } = await getAppConfig(hdrs);
+
   
 
 
@@ -30,12 +29,12 @@ export default async function AppLayout({ children }: AppLayoutProps) {
               </div>
             </div>
             
-            <div className="w-72">
-             
-            </div>
+            
           </div>
         </div>
+       
       </header>
+     
       {children}
     </>
   );
