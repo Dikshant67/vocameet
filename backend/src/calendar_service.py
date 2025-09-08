@@ -82,8 +82,27 @@ class CalendarService:
     
             processed_events = []
             for event in events:
-                start_time_aware = parser.parse(event["start"]["dateTime"])
-                end_time_aware = parser.parse(event["end"]["dateTime"])
+                #start_time_aware = parser.parse(event["start"]["dateTime"])
+                #end_time_aware = parser.parse(event["end"]["dateTime"])
+                start = event.get("start", {})
+                if "dateTime" in start:
+                    start_time_aware = parser.parse(start["dateTime"])
+                elif "date" in start:
+                    start_time_aware = parser.parse(start["date"])
+                else:
+            # If neither exists, skip
+                    continue
+
+                end = event.get("end", {})
+                if "dateTime" in end:
+                    end_time_aware = parser.parse(end["dateTime"])
+                elif "date" in start:
+                    end_time_aware = parser.parse(end["date"])
+                else:
+            # If neither exists, skip
+                    continue
+
+
                 processed_events.append({
                     "id": event.get("id", ""),
                     "title": event.get("summary", "No Title"),

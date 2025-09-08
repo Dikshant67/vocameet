@@ -55,13 +55,13 @@ export const Welcome = ({
       <footer className="w-full border-t border-border backdrop-blur-sm">
   <div className="container mx-auto px-6 py-4">
     <div className="flex items-center justify-center space-x-4 text-sm leading-4">
-      <span>&copy; 2024 Voice Agent. Enterprise Meeting Management.</span>
+      <span>&copy; 2025 TeknoLabs Voice Agent. Enterprise Meeting Management.</span>
       <Separator orientation="vertical" className="h-4" />
       <span>Powered by AI</span>
       <Separator orientation="vertical" className="h-4" />
       <span>Secure & Compliant</span>
       <Separator orientation="vertical" className="h-4" />
-      <span>Built with LiveKit</span>
+      <span>Built with TeknoLabs</span>
     </div>
   </div>
 </footer>
