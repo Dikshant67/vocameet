@@ -1,69 +1,107 @@
 "use client";
 
-import { signIn, signOut, useSession } from "next-auth/react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { jwtDecode } from "jwt-decode";
+import { ChevronDownIcon } from "@heroicons/react/24/solid";
+import { CredentialResponse, GoogleLogin } from "@react-oauth/google";
+import { useUser } from "@/app/context/UserContext";
+
+
+interface DecodedJWT {
+  name: string;
+  email: string;
+  picture: string;
+  [key: string]: any;
+}
 
 export default function GoogleSignInButton() {
-  const { data: session } = useSession();
+  const { user, setUser } = useUser();
+  const router = useRouter();
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
-  const googleButtonStyle = `
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background-color: white;
-    border: 1px solid #dadce0;
-    border-radius: 4px;
-    padding: 10px 24px;
-    font-size: 16px;
-    color: #3c4043;
-    font-weight: 500;
-    box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3);
-    cursor: pointer;
-    transition: box-shadow 0.2s ease;
-  `;
+  const handleSuccess = (credentialResponse: CredentialResponse) => {
+    if (credentialResponse.credential) {
+   const decoded: DecodedJWT = jwtDecode(credentialResponse.credential);
 
-  const googleIconStyle = `
-    height: 20px;
-    width: 20px;
-    margin-right: 12px;
-  `;
+      if (decoded.name && decoded.email && decoded.picture) {
+        const userData = {
+          name: decoded.name,
+          email: decoded.email,
+          picture: decoded.picture,
+        };
+        setUser(userData);
+        // router.push("/dashboard");
+        console.log("✅ User Info:", userData);
+      } else {
+        console.error("❌ Invalid user data in JWT");
+      }
+    } else {
+      console.error("❌ Login failed: No credential returned");
+    }
+  };
+
+  const handleError = () => {
+    console.error("❌ Google login error");
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    router.push("/");
+    setIsMenuOpen(false);
+  };
+
+  const handleProfileClick = () => {
+    router.push("/profile");
+    setIsMenuOpen(false);
+  };
 
   return (
     <div>
-      {session ? (
-        <>
-          <p>Welcome, {session.user?.name}</p>
-          <button style={{ ...buttonStyles }} onClick={() => signOut()}>
-            Sign out
-          </button>
-        </>
-      ) : (
-        <button
-          style={{ ...buttonStyles }}
-          onClick={() => signIn('google')}
-        >
+      {user ? (
+        <div className="relative flex items-center gap-3">
           <img
-            src="/google-icon.svg"
-            alt="Google Logo"
-            style={{ height: '20px', width: '20px', marginRight: '12px' }}
+            src={user.picture}
+            alt="Profile"
+            className="h-8 w-8 cursor-pointer rounded-full"
           />
-          Sign in with Google
-        </button>
+          <div className="flex items-center gap-1">
+            <span className="font-medium">{user.name}</span>
+            <button
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className="text-sm text-gray-600 hover:text-gray-800 focus:outline-none"
+              aria-label={isMenuOpen ? "Close menu" : "Open menu"}
+            >
+              <ChevronDownIcon className="h-4 w-4" />
+            </button>
+          </div>
+          <div
+            className={`absolute top-full right-0 mt-2 overflow-hidden rounded-md bg-white shadow-lg transition-all duration-300 ease-in-out ${
+              isMenuOpen ? "max-h-40 opacity-100" : "max-h-0 opacity-0"
+            }`}
+          >
+            <button
+              onClick={handleProfileClick}
+              className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+            >
+              Profile
+            </button>
+            <button
+              onClick={handleLogout}
+              className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+      ) : (
+        <GoogleLogin
+          onSuccess={handleSuccess}
+          onError={handleError}
+          text="signin_with"
+          logo_alignment="left"
+        />
       )}
     </div>
   );
 }
-
-const buttonStyles = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  backgroundColor: '#fff',
-  border: '1px solid #dadce0',
-  borderRadius: '4px',
-  padding: '10px 24px',
-  fontSize: '16px',
-  color: '#3c4043',
-  fontWeight: 500,
-  boxShadow: '0px 1px 2px rgba(60, 64, 67, 0.3)',
-  cursor: 'pointer',
-};

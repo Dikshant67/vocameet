@@ -1,48 +1,44 @@
 import { headers } from 'next/headers';
+import { UserProvider } from '@/app/context/UserContext';
+import Providers from '@/components/GoogleSessionProvider';
 import { getAppConfig } from '@/lib/utils';
 import GoogleSignInButton from '../components/GoogleSignInButton';
-import Providers from '@/components/GoogleSessionProvider';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 
 interface AppLayoutProps {
   children: React.ReactNode;
 }
 
 export default async function AppLayout({ children }: AppLayoutProps) {
-
-  
-
-
- 
   return (
     <>
-    <Providers>
-      <header className="border-b border-border bg-white/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            
-              <div className="flex items-center space-x-3">
-                <div className="w-9 h-9 bg-gradient-voice rounded-lg flex items-center justify-center shadow-sm">
-                  <span className="text-black font-bold text-sm">VA</span>
+  <GoogleOAuthProvider clientId={process.env.GOOGLE_CLIENT_ID}>
+ <UserProvider>
+        <Providers>
+          <header className="border-border sticky top-0 z-50 border-b bg-white/80 backdrop-blur-sm">
+            <div className="container mx-auto px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="bg-gradient-voice flex h-9 w-9 items-center justify-center rounded-lg shadow-sm">
+                    <span className="text-sm font-bold text-black">VA</span>
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-bold text-black">Voice Agent</h1>
+                    <p className="text-muted-black text-black">Meeting Management Platform</p>
+                  </div>
                 </div>
-                <div>
-                  <h1 className="text-xl text-black font-bold ">Voice Agent</h1>
-                  <p className="text-black text-muted-black">Meeting Management Platform</p>
+                <div className="flex items-center space-x-3">
+                  <GoogleSignInButton />
                 </div>
               </div>
-              <div className='flex items-center space-x-3'>
+            </div>
+          </header>
 
-                <GoogleSignInButton/>
-              </div>
-            
-            
-            
-          </div>
-        </div>
-       
-      </header>
+          {children}
+        </Providers>
+      </UserProvider>
+    </GoogleOAuthProvider>
      
-      {children}
-      </Providers>
     </>
   );
 }

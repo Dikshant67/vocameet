@@ -4,14 +4,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { Room, RoomEvent } from 'livekit-client';
 import { motion } from 'motion/react';
 import { RoomAudioRenderer, RoomContext, StartAudio } from '@livekit/components-react';
+import GoogleSignInButton from '@/app/components/GoogleSignInButton';
 import { toastAlert } from '@/components/alert-toast';
 import { SessionView } from '@/components/session-view';
 import { Toaster } from '@/components/ui/sonner';
-import { Welcome } from '@/components/welcome';
 import UpcomingMeetings from '@/components/upcoming-meetings';
+import { Welcome } from '@/components/welcome';
 import useConnectionDetails from '@/hooks/useConnectionDetails';
 import type { AppConfig } from '@/lib/types';
-import GoogleSignInButton from '@/app/components/GoogleSignInButton';
 
 const MotionWelcome = motion.create(Welcome);
 const MotionMeetings = motion.create(UpcomingMeetings);
@@ -91,10 +91,8 @@ export function App({ appConfig }: AppProps) {
         animate={{ opacity: sessionStarted ? 0 : 1 }}
         transition={{ duration: 0.5, ease: 'linear', delay: sessionStarted ? 0 : 0.5 }}
       />
-      
 
       <RoomContext.Provider value={room}>
-        
         <RoomAudioRenderer />
         <StartAudio label="Start Audio" />
         {/* --- */}
@@ -114,10 +112,13 @@ export function App({ appConfig }: AppProps) {
       </RoomContext.Provider>
 
       {/* Always-visible upcoming meetings panel */}
-      <MotionMeetings   disabled={sessionStarted}  key="meetings" initial={{ opacity: 1 }}
-  animate={{ opacity: sessionStarted ? 0 : 1 }}
-  transition={{ duration: 0.5, ease: 'linear', delay: sessionStarted ? 0 : 0.5 }}
-         />
+      <MotionMeetings
+        disabled={sessionStarted}
+        key="meetings"
+        initial={{ opacity: 1 }}
+        animate={{ opacity: sessionStarted ? 0 : 1 }}
+        transition={{ duration: 0.5, ease: 'linear', delay: sessionStarted ? 0 : 0.5 }}
+      />
 
       <Toaster />
     </main>

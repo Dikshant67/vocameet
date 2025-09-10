@@ -22,11 +22,11 @@
   --bg2: #f5f5f5; /* Light gray sections */
   --bg3: #e0e0e0; /* Cards / muted areas */
 
-  --bgSerious: #fdecea; 
-  --bgSerious2: #f28b82; 
-  --bgSuccess: #e8f5e9; 
-  --bgModerate: #fff3e0; 
-  --bgAccent: #e3f2fd; 
+  --bgSerious: #fdecea;
+  --bgSerious2: #f28b82;
+  --bgSuccess: #e8f5e9;
+  --bgModerate: #fff3e0;
+  --bgAccent: #e3f2fd;
   --bgAccentPrimary: #1565c0;
 
   /* Separators */
@@ -34,7 +34,7 @@
   --separator2: #bdbdbd;
 
   /* Core UI colors */
-   --background: #fdfdfd; /* clean white */
+  --background: #fdfdfd; /* clean white */
   --foreground: #1a1a1a; /* dark gray text */
   --primary: #1565c0; /* Corporate blue */
   --primary-hover: #0d47a1;
@@ -60,7 +60,6 @@
   --chart-4: #6a1b9a; /* Purple */
   --chart-5: #00838f; /* Teal */
 }
-
 
 .dark {
   --fg0: #ffffff;
@@ -181,7 +180,7 @@
 
   --color-destructive: var(--bgSerious);
   --color-destructive-hover: var(--bgSerious2);
-  --color-destructive-foreground: var(--fgSerious); 
+  --color-destructive-foreground: var(--fgSerious);
 }
 
 @layer base {
