@@ -11,6 +11,7 @@ import { Welcome } from '@/components/welcome';
 import UpcomingMeetings from '@/components/upcoming-meetings';
 import useConnectionDetails from '@/hooks/useConnectionDetails';
 import type { AppConfig } from '@/lib/types';
+import GoogleSignInButton from '@/app/components/GoogleSignInButton';
 
 const MotionWelcome = motion.create(Welcome);
 const MotionMeetings = motion.create(UpcomingMeetings);
@@ -90,8 +91,10 @@ export function App({ appConfig }: AppProps) {
         animate={{ opacity: sessionStarted ? 0 : 1 }}
         transition={{ duration: 0.5, ease: 'linear', delay: sessionStarted ? 0 : 0.5 }}
       />
+      
 
       <RoomContext.Provider value={room}>
+        
         <RoomAudioRenderer />
         <StartAudio label="Start Audio" />
         {/* --- */}

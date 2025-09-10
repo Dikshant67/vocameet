@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@google-cloud/local-auth": "^3.0.1",
+    "@heroicons/react": "^2.2.0",
     "@livekit/components-react": "^2.9.14",
     "@livekit/protocol": "^1.40.0",
     "@phosphor-icons/react": "^2.1.8",
