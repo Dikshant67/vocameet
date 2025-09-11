@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, createContext, useContext, useEffect, useState } from 'react';
+import { ReactNode, createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 type User = {
   name: string;
@@ -19,8 +19,13 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   // Initialize user from localStorage if available
   const [user, setUserState] = useState<User | null>(() => {
     if (typeof window !== 'undefined') {
-      const storedUser = localStorage.getItem('user');
-      return storedUser ? JSON.parse(storedUser) : null;
+      try {
+        const storedUser = localStorage.getItem('user');
+        return storedUser ? (JSON.parse(storedUser) as User) : null;
+      } catch {
+        localStorage.removeItem('user'); // clear corrupted value
+        return null;
+      }
     }
     return null;
   });
@@ -34,12 +39,29 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [user]);
 
-  // Wrap setUser to allow null for logout
+  // Sync across multiple tabs/windows
+  useEffect(() => {
+    const handleStorage = () => {
+      try {
+        const storedUser = localStorage.getItem('user');
+        setUserState(storedUser ? (JSON.parse(storedUser) as User) : null);
+      } catch {
+        setUserState(null);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  // Expose setUser wrapper
   const setUser = (user: User | null) => {
     setUserState(user);
   };
 
-  return <UserContext.Provider value={{ user, setUser }}>{children}</UserContext.Provider>;
+  // Memoize value for performance
+  const value = useMemo(() => ({ user, setUser }), [user]);
+
+  return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
 };
 
 export const useUser = () => {

@@ -23,7 +23,7 @@ export default function GoogleSignInButton() {
   const handleSuccess = (credentialResponse: CredentialResponse) => {
     if (credentialResponse.credential) {
    const decoded: DecodedJWT = jwtDecode(credentialResponse.credential);
-
+      console.log("🔍 Decoded JWT:", decoded);
       if (decoded.name && decoded.email && decoded.picture) {
         const userData = {
           name: decoded.name,
@@ -100,6 +100,9 @@ export default function GoogleSignInButton() {
           onError={handleError}
           text="signin_with"
           logo_alignment="left"
+          useOneTap
+          theme="dark"
+         
         />
       )}
     </div>
