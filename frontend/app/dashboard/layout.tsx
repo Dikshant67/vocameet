@@ -13,7 +13,11 @@ interface AppLayoutProps {
 export default async function AppLayout({ children }: AppLayoutProps) {
   return (
     <>
-  <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID}>
+  <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID}
+  
+  
+  
+  >
  <UserProvider>
         <Providers>
           <header className="border-border sticky top-0 z-50 border-b bg-white/80 backdrop-blur-sm">
