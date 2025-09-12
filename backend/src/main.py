@@ -1,5 +1,6 @@
 
 # Standard library imports
+from datetime import datetime
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -15,6 +16,10 @@ import google_auth_oauthlib.flow
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 from google.oauth2.credentials import Credentials
+
+# --- NEW DATABASE IMPORTS ---
+from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
 # Local application imports
 from calendar_service import CalendarService
 REDIRECT_URI = "postmessage"
@@ -25,6 +30,41 @@ logger = logging.getLogger(__name__)
 CLIENT_SECRETS_FILE = os.path.join(os.path.dirname(__file__), "client_secret.json")
 # --- CONFIG ---
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+# ==============================================================================
+# 3. --- NEW --- DATABASE SETUP (SQLAlchemy with SQLite)
+# ==============================================================================
+# The database file will be named 'vocameet.db' in the same directory
+DATABASE_URL = "sqlite:///./vocameet.db"
+
+engine = create_engine(
+    DATABASE_URL, connect_args={"check_same_thread": False} # Required for SQLite
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# --- NEW --- Database Model for User
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String)
+    picture = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login_time = Column(DateTime)
+    last_logout_time = Column(DateTime, nullable=True)
+
+# Create the database tables
+Base.metadata.create_all(bind=engine)
+
+# --- NEW --- Dependency to get a DB session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 
 # --- MODELS ---
 class TokenData(BaseModel):
@@ -116,7 +156,7 @@ def get_current_user(request: Request):
 #     except Exception as e:
 #         raise HTTPException(status_code=401, detail=f"Invalid Google token: {e}")
 @app.post("/auth/google")
-async def google_auth(auth_code: AuthCode, request: Request):
+async def google_auth(auth_code: AuthCode, request: Request, db: Session = Depends(get_db)):
     try:
         # Step 1: Exchange the authorization code for tokens
         flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
@@ -145,7 +185,29 @@ async def google_auth(auth_code: AuthCode, request: Request):
         user_email = id_info['email']
         user_name = id_info['name']
         user_picture = id_info['picture']
+        # --- NEW DATABASE LOGIC ---
+        current_time = datetime.utcnow()
+        db_user = db.query(User).filter(User.email == user_email).first()
+
+        if db_user:
+            # User exists, update their last login time and info
+            logger.info(f"Existing user '{user_email}' logged in.")
+            db_user.last_login_time = current_time
+            db_user.name = user_name
+            db_user.picture = user_picture
+        else:
+            # New user, create a record
+            logger.info(f"New user '{user_email}' created and logged in.")
+            new_user = User(
+                email=user_email,
+                name=user_name,
+                picture=user_picture,
+                last_login_time=current_time,
+            )
+            db.add(new_user)
         
+        db.commit()
+        # --- END OF NEW DATABASE LOGIC ---
         # Step 3 (Example): Store credentials and user info in the session
         request.session["user"] = {
             "email": user_email,
@@ -172,8 +234,18 @@ async def google_auth(auth_code: AuthCode, request: Request):
         import traceback
         traceback.print_exc() # This prints the full error stack
 @app.post("/logout")
-async def logout(request: Request):
-    logger.info(f"Logging out user: {request.session}")
+async def logout(request: Request, db: Session = Depends(get_db)):
+    user_info = request.session.get("user")
+    
+    # --- NEW DATABASE LOGIC ---
+    if user_info and user_info.get("email"):
+        user_email = user_info["email"]
+        db_user = db.query(User).filter(User.email == user_email).first()
+        if db_user:
+            db_user.last_logout_time = datetime.utcnow()
+            db.commit()
+            logger.info(f"User {user_email} logged out and timestamp recorded.")
+    # --- END OF NEW DATABASE LOGIC ---
     request.session.clear()
     return {"message": "Logged out"}
 
