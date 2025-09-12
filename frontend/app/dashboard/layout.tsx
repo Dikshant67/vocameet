@@ -27,7 +27,7 @@ export default async function AppLayout({ children }: AppLayoutProps) {
                   {/* <div className="bg-gradient-voice flex h-9 w-9 items-center justify-center rounded-lg shadow-sm">
                     <span className="text-sm font-bold text-black">VA</span>
                   </div> */}
-                  <NavBar/>
+    
                   {/* <div>
                     <h1 className="text-xl font-bold text-black">Voice Agent</h1>
                     <p className="text-muted-black text-black">Meeting Management Platform</p>
