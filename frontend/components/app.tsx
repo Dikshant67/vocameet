@@ -12,7 +12,8 @@ import UpcomingMeetings from '@/components/upcoming-meetings';
 import { Welcome } from '@/components/welcome';
 import useConnectionDetails from '@/hooks/useConnectionDetails';
 import type { AppConfig } from '@/lib/types';
-
+import { useUser} from "@/app/context/UserContext";
+import Footer from './ui/Footer';
 const MotionWelcome = motion.create(Welcome);
 const MotionMeetings = motion.create(UpcomingMeetings);
 const MotionSessionView = motion.create(SessionView);
@@ -23,6 +24,7 @@ interface AppProps {
 
 export function App({ appConfig }: AppProps) {
   const room = useMemo(() => new Room(), []);
+  const { user } = useUser();
   const [sessionStarted, setSessionStarted] = useState(false);
   const { refreshConnectionDetails, existingOrRefreshConnectionDetails } =
     useConnectionDetails(appConfig);
@@ -82,7 +84,9 @@ export function App({ appConfig }: AppProps) {
 
   return (
     <main>
+
       <MotionWelcome
+        userStatus={user}
         key="welcome"
         startButtonText={startButtonText}
         onStartCall={() => setSessionStarted(true)}
@@ -90,6 +94,7 @@ export function App({ appConfig }: AppProps) {
         initial={{ opacity: 1 }}
         animate={{ opacity: sessionStarted ? 0 : 1 }}
         transition={{ duration: 0.5, ease: 'linear', delay: sessionStarted ? 0 : 0.5 }}
+      
       />
 
       <RoomContext.Provider value={room}>
@@ -110,7 +115,7 @@ export function App({ appConfig }: AppProps) {
           }}
         />
       </RoomContext.Provider>
-
+      
       {/* Always-visible upcoming meetings panel */}
       <MotionMeetings
         disabled={sessionStarted}
@@ -118,9 +123,13 @@ export function App({ appConfig }: AppProps) {
         initial={{ opacity: 1 }}
         animate={{ opacity: sessionStarted ? 0 : 1 }}
         transition={{ duration: 0.5, ease: 'linear', delay: sessionStarted ? 0 : 0.5 }}
-      />
+        enabled={!!user}
+        />
+
+      <Footer />
 
       <Toaster />
+    
     </main>
   );
 }

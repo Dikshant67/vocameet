@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useUser } from "@/app/context/UserContext";
+import Footer from "@/components/ui/Footer";
+import { Toaster } from "@/components/ui/sonner";
 
 export default function LandingPage() {
   const router = useRouter();
@@ -200,7 +202,7 @@ export default function LandingPage() {
       </main>
 
       {/* Footer */}
-      <footer
+      {/* <footer
         id="contact"
         role="contentinfo"
         aria-label="Contact information"
@@ -213,7 +215,9 @@ export default function LandingPage() {
           </a>
         </p>
         <p>© 2025 Meeting Voice Agent. All rights reserved.</p>
-      </footer>
+      </footer> */}
+      <Footer/>
+      <Toaster/>
     </div>
   );
 }

@@ -1,7 +1,7 @@
-import { Separator } from '@radix-ui/react-separator';
+
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-
+import { toast } from "sonner";
 interface WelcomeProps {
   disabled: boolean;
   startButtonText: string;
@@ -9,14 +9,26 @@ interface WelcomeProps {
 }
 
 export const Welcome = ({
+  userStatus,
   disabled,
   startButtonText,
   onStartCall,
   ref,
+
+
 }: React.ComponentProps<'div'> & WelcomeProps) => {
+    const handleStartClick = () => {
+    if (!userStatus) {
+      // show toast if not logged in
+      toast.error("Please sign in to start the call");
+      return;
+    }
+    onStartCall();
+  };
   return (
     <>
       <section
+
         ref={ref}
         inert={disabled}
         className={cn(
@@ -46,24 +58,12 @@ export const Welcome = ({
           <p className="text-fg1 max-w-prose pt-1 leading-6 font-medium">
             Chat live with your voice AI agent
           </p>
-          <Button variant="primary" size="lg" onClick={onStartCall} className="mt-6 w-64 font-mono">
+          <Button variant="primary" size="lg" onClick={handleStartClick} className="mt-6 w-64 font-mono">
             {startButtonText}
           </Button>
         </div>
 
-        <footer className="border-border w-full border-t backdrop-blur-sm">
-          <div className="container mx-auto px-6 py-4">
-            <div className="flex items-center justify-center space-x-4 text-sm leading-4">
-              <span>&copy; 2025 TeknoLabs Voice Agent. Enterprise Meeting Management.</span>
-              <Separator orientation="vertical" className="h-4" />
-              <span>Powered by AI</span>
-              <Separator orientation="vertical" className="h-4" />
-              <span>Secure & Compliant</span>
-              <Separator orientation="vertical" className="h-4" />
-              <span>Built with TeknoLabs</span>
-            </div>
-          </div>
-        </footer>
+  
       </section>
     </>
   );
