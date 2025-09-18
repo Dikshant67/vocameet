@@ -29,6 +29,7 @@ class Expert(Base):
     gender = Column(String)
     date_of_birth = Column(DateTime)
     specialty = Column(String)
+    status = Column(default="ACTIVE")
     phone = Column(String)
     email = Column(String)
     calendar_link = Column(String)

@@ -16,28 +16,28 @@ logger = logging.getLogger("agent")
 class CalendarService:
     """A service for interacting with Google Calendar."""
 
-    def __init__(self, creds ):
-        # creds = Credentials(token)
-        self.service = build("calendar", "v3", credentials=creds,cache_discovery=False)
-     
+    def __init__(self, credentials_path: str = "../config/credentials.json", token_path: str = "token.json"):
+        self.credentials_path = credentials_path
+        self.token_path = token_path
+        self.service = self._get_calendar_service()
 
-    # def _get_calendar_service(self):
-    #     """Authenticate and return the Google Calendar service object."""
-    #     creds = None
-    #     if os.path.exists(self.token_path):
-    #         creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
+    def _get_calendar_service(self):
+        """Authenticate and return the Google Calendar service object."""
+        creds = None
+        if os.path.exists(self.token_path):
+            creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
 
-    #     if not creds or not creds.valid:
-    #         if creds and creds.expired and creds.refresh_token:
-    #             creds.refresh(Request())
-    #         else:
-    #             flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, SCOPES)
-    #             creds = flow.run_local_server(port=8080,access_type="offline", prompt="consent")
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, SCOPES)
+                creds = flow.run_local_server(port=8080,access_type="offline", prompt="consent")
 
-    #         with open(self.token_path, "w") as token:
-    #             token.write(creds.to_json())
+            with open(self.token_path, "w") as token:
+                token.write(creds.to_json())
 
-    #     return build("calendar", "v3", credentials=creds)
+        return build("calendar", "v3", credentials=creds)
 
     def create_meeting(self, summary: str, start_time: str, end_time: str, attendees: list[str],timezone : str):
         """Create a new calendar meeting."""
