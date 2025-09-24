@@ -1,8 +1,11 @@
+from dataclasses import dataclass
 import logging
 import os
-from typing import Optional
+import re
+from typing import List, Optional
+from AppDatabase import AppDatabase
 from livekit.plugins import azure
-
+from livekit import rtc
 from dotenv import load_dotenv
 from livekit.agents import (
     NOT_GIVEN,
@@ -23,21 +26,35 @@ from livekit.agents.llm import function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from calendar_service import CalendarService
+
 calendar_service = CalendarService()
 logger = logging.getLogger("agent")
 
 load_dotenv()
+db=AppDatabase()
+@dataclass
+class UserData:
+    user_name: str
+    meeting_date : str
+    meeting_title : str
+    meeting_attendee : str
+    transcription : str
+    
+RunContext_T=RunContext[UserData]
+    
 
 
-class Assistant(Agent):
-    def __init__(self) -> None:
+class AppointmentSchedulingAssistant(Agent):
+    def __init__(self,ctx : JobContext) -> None:
         now = datetime.datetime.now(datetime.timezone.utc).astimezone() # Timezone-aware
+        self.transcriptions : List[str] =[] 
+        self.transcription_buffer : str = ""
         current_date_str = now.strftime("%A, %B %d, %Y")
         super().__init__(
             instructions=f"""You are a friendly and helpful voice AI assistant designed for managing meetings . 
             The current date and time is {current_date_str}.
             When you first connect,Greet user with a friendly greeting and offer a friendly welcome. 
-  
+
             **CRITICAL INSTRUCTION: Your responses MUST be in plain text only. NEVER use any special formatting, including asterisks, bolding, italics, or bullet points.**
             Do not accept the dates and time in the past suggest them to use in future dates and times.
             Do not read ,refer asterisk symbol in any context.
@@ -52,7 +69,7 @@ class Assistant(Agent):
     # agent is active
     
     @function_tool
-    async def lookup_weather(self, context: RunContext, location: str):
+    async def lookup_weather(self, context: RunContext_T, location: str):
         """Use this tool to look up current weather information in the given location.
 
         If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
@@ -65,14 +82,25 @@ class Assistant(Agent):
 
         return "sunny with a temperature of 70 degrees."
     @function_tool
-    async def get_current_date(self,context : RunContext) -> str:
+    async def get_current_date(self,context : RunContext_T) -> str:
         """Used to get the current date and time."""
         now = datetime.datetime.now()
         return now.strftime("%A, %B %d, %Y at %I:%M %p")
+    
+    async def save_meeting_in_db(self,event_id :str ,title:str,start_time:str,end_time:str,attendees:list[str]):
+        db.create_appointment(event_id,1,2,title,start_time,end_time)
+        return "meeting saved successfully"
+        
+    @function_tool
+    async def save_user_sentiment(self,context: RunContext_T,sentiment:str)->UserData:
+        """ To save the users sentiment in db either Happy,sad,neutral"""
+        
+        
+        
     @function_tool
     async def schedule_meeting(
         self,
-        context: RunContext,
+        context: RunContext_T,
         title: str,
         start_time: str,
         end_time: str,
@@ -91,7 +119,7 @@ class Assistant(Agent):
           clarify before calling the tool.Confirm all the details before scheduling.
     
         Args:
-            context (RunContext): The current run context (not user-supplied).
+            context (RunContext_T): The current run context (not user-supplied).
             Ask one by one each arg,so that it will be easy for the user to speak the args.
             title (str): The meeting title or subject.
             start_time (str): ISO 8601 formatted start datetime (e.g., "2025-09-03T10:00:00").
@@ -102,13 +130,20 @@ class Assistant(Agent):
         Returns:
             str: Confirmation message with meeting title, start time, end time and date
         """
-        event_id, link = calendar_service.create_meeting(title, start_time, end_time, attendees,timezone)
-        return f"Meeting created:{title})"
-    
+        event_id= calendar_service.create_meeting(title, start_time, end_time, attendees,timezone)
+        event_id = event_id[0] if isinstance(event_id, tuple) else event_id
+        result= await self.save_meeting_in_db(event_id,title,start_time,end_time,attendees)
+        return f"Meeting created:{title} and {result})"
+    @function_tool
+    async def save_user_data(self,context: RunContext_T,user_name:str)->UserData:
+        """Whenever you get the user name , call this function to Save user data in database"""
+        user_id=db.create_user(name=user_name)
+        db.get_user(user_id)
+        return "Data Saved successfully in Database"
     @function_tool
     async def list_meetings_by_date(
         self,
-        context: RunContext,
+        context: RunContext_T,
         date: str,
         max_results: int = 10
     ):
@@ -123,7 +158,7 @@ class Assistant(Agent):
           but does not remember the event ID.
     
         Args:
-            context (RunContext): The current run context (not user-supplied).
+            context (RunContext_T): The current run context (not user-supplied).
             date (str): The date to search for meetings (format YYYY-MM-DD).
             max_results (int, optional): Maximum number of meetings to list. Defaults to 10.
     
@@ -152,7 +187,7 @@ class Assistant(Agent):
     @function_tool
     async def list_meetings(
         self,
-        context: RunContext,
+        context: RunContext_T,
         max_results: int = 10
     ):
         """
@@ -165,7 +200,7 @@ class Assistant(Agent):
         - If no meetings are found, politely inform the user.
 
         Args:
-            context (RunContext): The current run context (not user-supplied).
+            context (RunContext_T): The current run context (not user-supplied).
             max_results (int, optional): Maximum number of meetings to list. Defaults to 10.
 
         Returns:
@@ -189,7 +224,7 @@ class Assistant(Agent):
     @function_tool
     async def cancel_meeting(
     self,
-    context: RunContext,
+    context: RunContext_T,
     event_id: Optional[str] = None,
     date: Optional[str] = None,
     ordinal: Optional[int] = None
@@ -204,7 +239,7 @@ class Assistant(Agent):
         - If neither `event_id` nor `date` are provided, the tool will ask the user for more information.
 
         Args:
-            context (RunContext): The current run context (not user-supplied).
+            context (RunContext_T): The current run context (not user-supplied).
             event_id (str, optional): The unique ID of the meeting to cancel.
             date (str, optional): The date (YYYY-MM-DD) to search for meetings to cancel.
             ordinal (int, optional): The ordinal number of the meeting to cancel from the list of meetings on the given date (1-based index).
@@ -253,10 +288,12 @@ class Assistant(Agent):
             }
 
         return "Could you please provide the meeting ID or the date of the meeting you'd like to cancel?"   
+
+
     @function_tool
     async def reschedule_meeting(
         self,
-        context: RunContext,
+        context: RunContext_T,
         event_id: str,
         new_start: str,
         new_end: str
@@ -272,7 +309,7 @@ class Assistant(Agent):
             list upcoming meetings and confirm which meeting to move.
 
         Args:
-            context (RunContext): The current run context (not user-supplied).
+            context (RunContext_T): The current run context (not user-supplied).
             event_id (str): The unique ID of the meeting to reschedule.
             new_start (str): ISO 8601 formatted new start datetime.
             new_end (str): ISO 8601 formatted new end datetime.
@@ -289,8 +326,12 @@ def prewarm(proc: JobProcess):
 async def entrypoint(ctx: JobContext):
     # Logging setup
     # Add any other context you want in all log entries here
+    
     ctx.log_context_fields = {
         "room": ctx.room.name,
+        # "participant": ctx.room.local_participant.identity,
+        # "job": ctx.job.id,
+        # "userdata": ctx.proc.userdata,
     }
 
     # Set up a voice AI pipeline using OpenAI, Cartesia, Deepgram, and the LiveKit turn detector
@@ -331,6 +372,8 @@ async def entrypoint(ctx: JobContext):
 
     # sometimes background noise could interrupt the agent session, these are considered false positive interruptions
     # when it's detected, you may resume the agent's speech
+
+        # Handle user joining the room
     @session.on("agent_false_interruption")
     def _on_agent_false_interruption(ev: AgentFalseInterruptionEvent):
         logger.info("false positive interruption, resuming")
@@ -360,8 +403,20 @@ async def entrypoint(ctx: JobContext):
     # await avatar.start(session, room=ctx.room)
 
     # Start the session, which initializes the voice pipeline and warms up the models
+    
+    appointment_scheduling_assistant = AppointmentSchedulingAssistant(ctx)
+    logger.info(f"{RoomInputOptions.participant_identity}-----------------------$$$$$$$$$$$--------------$$$$$$$$$$")
+    logger.info(f"{rtc.participant} : RTC Participant")
+  
+    # @session.on("user_joined")
+    # def save_user_data(user: ctx..RemoteParticipant):
+    #     logger.info(f"User joined: {user.identity}")
+    #     db.create_user(name=user.identity)
+        
+
+          
     await session.start(
-        agent=Assistant(),
+        agent=AppointmentSchedulingAssistant(ctx),
         room=ctx.room,
         room_input_options=RoomInputOptions(
             # LiveKit Cloud enhanced noise cancellation
@@ -373,7 +428,59 @@ async def entrypoint(ctx: JobContext):
 
     # Join the room and connect to the user
     await ctx.connect()
+    @session.on("user_input_transcribed")
+    def on_transcript(transcript):
+        if appointment_scheduling_assistant.transcription_buffer:
+            appointment_scheduling_assistant.transcription_buffer+=" "+ transcript.transcript
+        else:
+            appointment_scheduling_assistant.transcription_buffer = transcript.transcript
+        logger.info(f"Transcription Buffer: {appointment_scheduling_assistant.transcription_buffer}")
+        sentence_endings=re.findall(r'[.!?]',appointment_scheduling_assistant.transcription_buffer)
+        if len(sentence_endings)>=3:
+            sentence_count=0
+            last_pos=0
+            for match in re.finditer(r'[.!?]',appointment_scheduling_assistant.transcription_buffer):
+                sentence_count+=1
+                if sentence_count ==3 :
+                    last_pos=match.end()
+                    break
+            two_sentences=appointment_scheduling_assistant.transcription_buffer[:last_pos].strip()# Extract the second sentence
+            appointment_scheduling_assistant.transcription_buffer =appointment_scheduling_assistant.transcription_buffer[last_pos:].strip()# Remove the second sentence from the buffer
+            appointment_scheduling_assistant.transcriptions.append(two_sentences)# Append the second sentence to the list
+            logger.info(f"Processing for notes : {two_sentences}")
+            if(len( two_sentences)>5):
+             db.add_transcription(1,two_sentences)
+    @ctx.room.on("participant_connected")
+    def on_participant_connected(participant: rtc.RemoteParticipant):
+        """Called when a user joins the room"""
+        logger.info(f"User joined: {participant}")
+        try:
+            # Save user to database
+            user_id = db.create_user(name=participant)
+            logger.info(f"User saved to database with ID: {user_id}")
+        except Exception as e:
+            logger.error(f"Error saving user to database: {e}")    
+            
+       # Alternative approach: Handle when participant metadata is updated
+    @ctx.room.on("participant_metadata_changed") 
+    def on_participant_metadata_changed(participant: rtc.RemoteParticipant, prev_metadata: str):
+        """Called when participant metadata changes - useful if name comes later"""
+        logger.info(f"Participant metadata changed for {participant}: {participant}")
+        # You can extract additional user info from metadata if needed
 
-
+        # IMPORTANT: Check for participants that joined before agent was ready
+        logger.info(f"Checking for existing participants in room: {ctx.room.name}")
+    
+    # for participant in ctx.room.remote_participants:
+    #     logger.info(f"Found existing participant: {participant.identity}")
+    #     try:
+    #         # Save user to database
+    #         user_id = db.create_user(name=participant)
+    #         logger.info(f"Existing user saved to database with ID: {user_id}")
+    #     except Exception as e:
+    #         logger.error(f"Error saving existing user to database: {e}")
+    
+    if not ctx.room.remote_participants:
+        logger.info("No existing participants found - waiting for new connections")
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))

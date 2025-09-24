@@ -35,8 +35,8 @@ class AppDatabase:
             name TEXT NOT NULL,
             gender TEXT,
             date_of_birth TIMESTAMP,
-            phone TEXT UNIQUE,
-            email TEXT UNIQUE,
+            phone TEXT ,
+            email TEXT ,
             preferred_language TEXT DEFAULT 'en',
             other_languages TEXT,
             city TEXT,
@@ -46,6 +46,7 @@ class AppDatabase:
             last_login_on TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP
+            
         )
         ''')
 
@@ -75,10 +76,11 @@ class AppDatabase:
         # Appointments
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS appointments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT PRIMARY KEY ,
             user_id INTEGER,
             expert_id INTEGER,
-            appointment_time TIMESTAMP NOT NULL,
+            start_time TIMESTAMP NOT NULL,
+            end_time TIMESTAMP NOT NULL,
             status TEXT DEFAULT 'Scheduled',
             purpose TEXT,
             notes TEXT,
@@ -111,7 +113,7 @@ class AppDatabase:
         CREATE TABLE IF NOT EXISTS conversations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
-            input_text TEXT,
+            transcription TEXT,
             response_text TEXT,
             audio_file_path TEXT,
             sentiment TEXT,
@@ -155,7 +157,7 @@ class AppDatabase:
         logger.info(f"Database initialized at {self.db_path}")
 
     # ---------------- USERS ----------------
-    def create_user(self, name: str, email: str, phone: Optional[str] = None) -> int:
+    def create_user(self, name: str, email: Optional[str] = None, phone: Optional[str] = None) -> int:
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
@@ -197,12 +199,12 @@ class AppDatabase:
         return dict(row) if row else None
 
     # ---------------- APPOINTMENTS ----------------
-    def create_appointment(self, user_id: int, expert_id: int, appointment_time: str) -> int:
+    def create_appointment(self,event_id: str, user_id: int, expert_id: int,title :str, start_time: str,end_time:str) -> int:
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO appointments (user_id, expert_id, appointment_time) VALUES (?, ?, ?)",
-            (user_id, expert_id, appointment_time),
+            "INSERT INTO appointments (event_id, user_id, expert_id,purpose, start_time, end_time) VALUES (?,?, ?, ?,?,?)",
+            (event_id,user_id, expert_id,title,start_time,end_time),
         )
         appt_id = cursor.lastrowid
         conn.commit()
@@ -216,7 +218,44 @@ class AppDatabase:
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None
-
+    def get_appointments_by_time_and_title(self,start_time: str, end_time: str, title: str):
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM appointments
+            WHERE start_time = ? AND end_time = ? AND purpose = ?
+            """,
+            (start_time, end_time, title)
+        )
+        row=cursor.fetchone()    
+        conn.close()
+        return dict(row) if row else None
+    def cancel_appointment(self, appt_id: int) -> bool:
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("UPDATE appointments SET status = 'Cancelled' WHERE id = ?", (appt_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(e)
+            return False
+        finally:
+            conn.close()
+    
+    #-----------------CONVERSATIONS-----------------
+    
+    def add_transcription(self ,user_id:int,transcription:str)->int:
+        conn=self._connect()
+        cursor=conn.cursor()
+        cursor.execute(
+            "INSERT INTO conversations (user_id,transcription) VALUES (?,?)",(user_id,transcription),)
+        conv_id=cursor.execute("select * from conversations where user_id=? ",(user_id,))
+        conn.commit()
+        conn.close()
+        return True if conv_id else False
+    
     # ---------------- FEEDBACK ----------------
     def create_feedback(self, user_id: int, appointment_id: int, rating: int, comments: str) -> int:
         conn = self._connect()
