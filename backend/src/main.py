@@ -5,7 +5,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 import traceback
-
+from livekit import api
 # Third-party imports
 import dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -184,7 +184,7 @@ async def google_auth(auth_code: AuthCode, request: Request, db: Session = Depen
         
         user_email = id_info['email']
         user_name = id_info['name']
-        user_picture = id_info['picture']
+        user_picture = id_info['picture']   
         # --- NEW DATABASE LOGIC ---
         current_time = datetime.utcnow()
         db_user = db.query(User).filter(User.email == user_email).first()
@@ -233,6 +233,37 @@ async def google_auth(auth_code: AuthCode, request: Request, db: Session = Depen
         print(f"The actual error is: {e}")
         import traceback
         traceback.print_exc() # This prints the full error stack
+# @app.get("/livekit/user-credentials/{user_email}")
+# async def get_user_credentials_for_agent(user_email: str, agent_key: str, db: Session = Depends(get_db)):
+#     """Endpoint for LiveKit agent to get user credentials"""
+    
+#     # Verify agent key (set this in your environment)
+#     AGENT_API_KEY = os.getenv("AGENT_API_KEY")
+#     if not AGENT_API_KEY or agent_key != AGENT_API_KEY:
+#         raise HTTPException(status_code=401, detail="Invalid agent key")
+    
+#     # Get user from database
+#     db_user = db.query(User).filter(
+#         User.email == user_email,
+#         User.is_active_session == 1
+#     ).first()
+    
+#     if not db_user:
+#         raise HTTPException(status_code=404, detail="User not found or not active")
+    
+#     # Get decrypted credentials
+#     credentials = db_user.get_credentials()
+#     if not credentials:
+#         raise HTTPException(status_code=404, detail="No credentials found for user")
+    
+#     return {
+#         "user": {
+#             "email": db_user.email,
+#             "name": db_user.name
+#         },
+#         "credentials": credentials
+#     }
+        
 @app.get("/livekit/user-credentials/{user_email}")
 async def get_user_credentials_for_agent(user_email: str, agent_key: str, db: Session = Depends(get_db)):
     """Endpoint for LiveKit agent to get user credentials"""
@@ -332,6 +363,18 @@ async def check_user(user: dict = Depends(get_current_user)):
     """Check if a user is authenticated."""
     logger.info(f"User checked: {user}")
     return {"message": f"Hello, {user['name']}! You are logged in."}
+
+@app.get('/getToken')
+def getToken():
+  
+  token = api.AccessToken("devkey", "secret") \
+    .with_identity("identity") \
+    .with_name("dikshant") \
+    .with_grants(api.VideoGrants(
+        room_join=True,
+        room="my-room",
+    ))
+  return token.to_jwt()
 
 # ==============================================================================
 # 10. SERVER RUN

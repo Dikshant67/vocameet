@@ -4,13 +4,14 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        {
-            "name": "Attach to Edge",
-            "port": 9222,
-            "request": "attach",
-            "type": "msedge",
-            "webRoot": "${workspaceFolder}"
-        },
+        
+        // {
+        //     "name": "Attach to Edge",
+        //     "port": 9222,
+        //     "request": "attach",
+        //     "type": "msedge",
+        //     "webRoot": "${workspaceFolder}"
+        // },
         {
             "name": "Python Debugger: FastAPI",
             "type": "debugpy",
@@ -21,6 +22,12 @@
                 "--reload"
             ],
             "jinja": true
-        }
+        },
+        {"name": "Python: agent.py",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/agent.py",
+        "console": "integratedTerminal",
+        "justMyCode": true}
     ]
 }
