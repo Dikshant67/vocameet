@@ -26,13 +26,14 @@
       "problemMatcher": []
     },
     {
-  "label": "start all",
-  "dependsOn": [
-    "Livekit Server", // Case-sensitive
-    "Run Main.py",    // Case-sensitive
-    "Run Agent.py",   // Case-sensitive
-    "Frontend Dev"    // Case-sensitive
-  ]
-}
+      "label": "start all",
+      "dependsOn": [
+        "Livekit Server",
+        "Run Main.py",
+        "Run Agent.py",
+        "Frontend Dev"
+      ],
+      "problemMatcher": []
+    }
   ]
 }

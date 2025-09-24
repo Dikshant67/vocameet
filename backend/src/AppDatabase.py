@@ -44,6 +44,7 @@ class AppDatabase:
             country TEXT,
             time_zone TEXT,
             last_login_on TIMESTAMP,
+            last_logout_on TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP
             
@@ -176,6 +177,40 @@ class AppDatabase:
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Fetch a user by their email address."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def update_user_on_login(self, user_id: int, name: str):
+        """Update user's name and last login time."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        now = datetime.utcnow()
+        cursor.execute(
+            "UPDATE users SET name = ?, last_login_on = ?, updated_at = ? WHERE id = ?",
+            (name, now, now, user_id)
+        )
+        conn.commit()
+        conn.close()
+        logger.info(f"Updated login time for user_id={user_id}")
+
+    def record_logout(self, email: str):
+        """This method is a placeholder as your schema doesn't have a last_logout_time.
+           If you add that column, you can implement the update logic here.
+           For now, it just logs the action."""
+    
+        logger.info(f"Logout recorded for user with email: {email}")
+        # Example update query if you add the column:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET last_logout_on = ? WHERE email = ?", (datetime.utcnow(), email))
+        conn.commit()
+        conn.close()
 
     # ---------------- EXPERTS ----------------
     def create_expert(self, name: str, specialty: str, email: str) -> int:
