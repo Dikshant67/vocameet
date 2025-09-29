@@ -1,79 +1,55 @@
-// src/components/GoogleSignInButton.tsx (or similar file)
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { signIn, signOut, useSession } from "next-auth/react";
 import { ChevronDownIcon } from "@heroicons/react/24/solid";
-import { useGoogleLogin } from "@react-oauth/google"; // <-- IMPORT THE HOOK
 import { useUser } from "@/app/context/UserContext";
-
-// Keep your DecodedJWT interface if you need it, but we'll get user info from the backend now
-interface DecodedJWT {
-  name: string;
-  email: string;
-  picture: string;
-  [key: string]: any;
-}
 
 export default function GoogleSignInButton() {
   const { user, setUser } = useUser();
   const router = useRouter();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
-  // Use the hook to handle the login flow
-  const login = useGoogleLogin({
-    // This is the key change: we want an authorization 'code'
-    flow: "auth-code",
-    // This function will be called with the 'code' after the user consents
-    onSuccess: async (codeResponse) => {
-      console.log("Authorization Code received:", codeResponse.code);
-      try {
-        // Send the one-time authorization code to your backend
-        const response = await fetch("http://localhost:8000/auth/google", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include", // Important for cookies/sessions
-          // The body now contains the code, not an ID token
-          body: JSON.stringify({ code: codeResponse.code }),
-        });
+  const { data: session, status } = useSession();
 
-        if (!response.ok) {
-          throw new Error("Failed to authenticate with backend.");
-        }
-
-        // Assume your backend returns user info after successful token exchange
-        const backendUser = await response.json();
-
-        // Set the user in your context with data from your backend
-        setUser({
-          name: backendUser.name,
-          email: backendUser.email,
-          picture: backendUser.picture,
-        });
-      } catch (error) {
-        console.error("Authentication code exchange failed:", error);
-      }
-    },
-    onError: (error) => console.error("❌ Google login error", error),
-    // Ensure you request the calendar scope here
-    scope: "openid email profile https://www.googleapis.com/auth/calendar",
-  });
-
-  const handleLogout = async () => {
-    await fetch("http://localhost:8000/logout", {
-      method: "POST",
-      credentials: "include",
-    });
+useEffect(() => {
+  if (status === "authenticated" && session?.user) {
+    const newUser = {
+      name: session.user.name || "",
+      email: session.user.email || "",
+      picture: session.user.image || "",
+    };
+    // Only update if different from current context
+    if (!user || user.email !== newUser.email) {
+      setUser(newUser);
+    }
+  } else if (status === "unauthenticated" && user) {
     setUser(null);
-    router.push("/");
-    setIsMenuOpen(false);
+  }
+}, [status, session, user, setUser]);
+
+
+  const handleLogin = async () => {
+    try {
+      await signIn("google", { callbackUrl: "/" });
+    } catch (error) {
+      console.error("NextAuth login error:", error);
+    }
   };
 
-  // The rest of your JSX remains largely the same, but the button now triggers the 'login' function
+  const handleLogout = async () => {
+    try {
+      await signOut({ callbackUrl: "/" });
+      setIsMenuOpen(false);
+    } catch (error) {
+      console.error("NextAuth logout error:", error);
+    }
+  };
+
   return (
     <div>
       {user ? (
-        // --- Your existing logged-in user UI (this part is fine) ---
         <div className="relative flex items-center gap-3">
           <img
             src={user.picture}
@@ -107,12 +83,11 @@ export default function GoogleSignInButton() {
           )}
         </div>
       ) : (
-        // --- Replace the <GoogleLogin> component with a simple button ---
         <button
-          onClick={() => login()}
+          onClick={handleLogin}
           className="flex items-center gap-2 rounded-lg bg-gray-800 px-4 py-2 text-white shadow-md transition hover:bg-gray-700"
         >
-          {/* You can add the Google icon here */}
+          {/* Google Icon */}
           <svg
             className="h-5 w-5"
             viewBox="0 0 48 48"
