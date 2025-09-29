@@ -2,6 +2,8 @@ from dataclasses import dataclass
 import logging
 import os
 import re
+
+
 from typing import List, Optional
 from AppDatabase import AppDatabase
 from livekit.plugins import azure
@@ -20,6 +22,7 @@ from livekit.agents import (
     WorkerOptions,
     cli,
     metrics,
+    
 )
 import datetime
 from livekit.agents.llm import function_tool
@@ -42,8 +45,14 @@ class UserData:
     
 RunContext_T=RunContext[UserData]
     
-
-
+def run_agent_with_user(user: dict):
+    user_id = user["user_id"]
+    email = user.get("email")
+ 
+    print(f"Running agent for user ID: {user_id}, email: {email}")
+    logger.info(f"Running agent for user ID: {user_id}, email: {email}")
+    # Do your custom logic here
+    return f"Agent ran for user {user_id}"
 class AppointmentSchedulingAssistant(Agent):
     def __init__(self,ctx : JobContext) -> None:
         now = datetime.datetime.now(datetime.timezone.utc).astimezone() # Timezone-aware
@@ -67,7 +76,18 @@ class AppointmentSchedulingAssistant(Agent):
 
     # all functions annotated with @function_tool will be passed to the LLM when this
     # agent is active
+    def run_agent_with_user(user_id: str):
+    # Your logic here
+        print(f"Running agent for user: {user_id}")
+        # Simulate fetching or processing user data
+        user_data = {
+            "user_id": user_id,
+            "preferences": ["AI", "Python", "FastAPI"]
+        }
     
+        # Do something with user_data...
+        return f"Processed data for user {user_data['user_id']}"
+
     @function_tool
     async def lookup_weather(self, context: RunContext_T, location: str):
         """Use this tool to look up current weather information in the given location.
@@ -329,6 +349,7 @@ async def entrypoint(ctx: JobContext):
     
     ctx.log_context_fields = {
         "room": ctx.room.name,
+        
         # "participant": ctx.room.local_participant.identity,
         # "job": ctx.job.id,
         # "userdata": ctx.proc.userdata,
@@ -352,7 +373,7 @@ async def entrypoint(ctx: JobContext):
         tts = azure.TTS(speech_key=os.getenv("AZURE_SPEECH_KEY"), speech_region=os.getenv("AZURE_SPEECH_REGION"),voice="en-IN-AartiNeural"),
         #voice="mr-IN-AarohiNeural"
         #language="mr-IN"
-                        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
+        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all providers at https://docs.livekit.io/agents/integrations/tts/
         # tts=cartesia.TTS(voice="6f84f4b8-58a2-430c-8c79-688dad597532"),
         # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
@@ -382,12 +403,67 @@ async def entrypoint(ctx: JobContext):
     # Metrics collection, to measure pipeline performance
     # For more information, see https://docs.livekit.io/agents/build/metrics/
     usage_collector = metrics.UsageCollector()
+    # @session.on("speech_created")
+    # def _on_speech_created(ev: SpeechCreatedEvent):
+    #     logger.info(f"Speech created: {ev.speech_event.text}")
 
     @session.on("metrics_collected")
     def _on_metrics_collected(ev: MetricsCollectedEvent):
         metrics.log_metrics(ev.metrics)
+        logger.info("metrics printed on console -----------------------")
         usage_collector.collect(ev.metrics)
+    @ctx.room.on("participant_disconnected")
+    def on_participant_disconnected(participant: rtc.RemoteParticipant):
+        """Called when a user leaves the room"""
+        logger.info(f"User disconnected: {participant}")
+    @ctx.room.on("participant_connected")
+    def on_participant_connected(participant: rtc.RemoteParticipant):
+        """Called when a user enters the room"""
+        logger.info(f"User Connected: {participant}" )  
+        
+    @ctx.room.on("track_subscribed")
+    def on_track_subscribed(
+        track: rtc.Track,
+        publication: rtc.RemoteTrackPublication,
+        participant: rtc.RemoteParticipant,
+    ):
+        logger.info("track subscribed: %s", publication.sid)
 
+    # By default, autosubscribe is enabled. The participant will be subscribed to
+    # all published tracks in the room
+       
+        logger.info("connected to room %s", ctx.room.name,"The room has the ",ctx.room.num_participants," participants..")
+
+        for identity, participant in ctx.room.remote_participants.items():
+            print(f"identity: {identity}")
+            print(f"participant: {participant}")
+            user_id=db.get_user_by_email(participant.identity)
+            if user_id:
+                transcript=db.get_transcription(user_id)
+                logger.info(transcript)
+                
+               
+            
+            # Now participant is the RemoteParticipant object, not a tuple
+            print(f"participant sid: {participant.sid}")
+            print(f"participant identity: {participant.identity}")
+            print(f"participant name: {participant.name}")
+            print(f"participant kind: {participant.kind}")
+            print(f"participant track publications: {participant.track_publications}")
+            for tid, publication in participant.track_publications.items():
+                print(f"\ttrack id: {tid}")
+                print(f"\t\ttrack publication: {publication}")
+                print(f"\t\ttrack kind: {publication.kind}")
+                print(f"\t\ttrack name: {publication.name}")
+                print(f"\t\ttrack source: {publication.source}")
+
+            print(f"participant metadata: {participant.metadata}")
+
+    # @session.on("participant_connected")
+    # def on_participant_connected(participant):
+    #     logger.info(f"Participant joined: {participant.metadata}")
+    # def on_participant_connected(participant):
+    #     logger.info(f"Participant joined:{ctx.room.local_participant} {ctx.room.local_participant.metadata} ")
     async def log_usage():
         summary = usage_collector.get_summary()
         logger.info(f"Usage: {summary}")
@@ -406,7 +482,7 @@ async def entrypoint(ctx: JobContext):
     
     appointment_scheduling_assistant = AppointmentSchedulingAssistant(ctx)
     logger.info(f"{RoomInputOptions.participant_identity}-----------------------$$$$$$$$$$$--------------$$$$$$$$$$")
-    logger.info(f"{rtc.participant} : RTC Participant")
+    # logger.info(f"{rtc.participant} : RTC Participant")
   
     # @session.on("user_joined")
     # def save_user_data(user: ctx..RemoteParticipant):
@@ -428,6 +504,14 @@ async def entrypoint(ctx: JobContext):
 
     # Join the room and connect to the user
     await ctx.connect()
+    # @session.on("conversation_item_added")
+    # async def get_user_name(participant : JobContext.remote_participants):
+    #     logger.info(f"{participant} connected ")
+
+    # @ctx.room.on("participant_connected")
+    # def on_participant_connected(participant: rtc.RemoteParticipant):
+    #     """Called when a user enters the room"""
+    #     logger.info(f"User Connected: {participant}" )
     @session.on("user_input_transcribed")
     def on_transcript(transcript):
         if appointment_scheduling_assistant.transcription_buffer:
@@ -448,29 +532,28 @@ async def entrypoint(ctx: JobContext):
             appointment_scheduling_assistant.transcription_buffer =appointment_scheduling_assistant.transcription_buffer[last_pos:].strip()# Remove the second sentence from the buffer
             appointment_scheduling_assistant.transcriptions.append(two_sentences)# Append the second sentence to the list
             logger.info(f"Processing for notes : {two_sentences}")
-            if(len( two_sentences)>5):
+            if(len( two_sentences)>5  and two_sentences not in appointment_scheduling_assistant.transcriptions):
              db.add_transcription(1,two_sentences)
-    @ctx.room.on("participant_connected")
-    def on_participant_connected(participant: rtc.RemoteParticipant):
-        """Called when a user joins the room"""
-        logger.info(f"User joined: {participant}")
-        try:
-            # Save user to database
-            user_id = db.create_user(name=participant)
-            logger.info(f"User saved to database with ID: {user_id}")
-        except Exception as e:
-            logger.error(f"Error saving user to database: {e}")    
+    # @ctx.room.on("participant_connected")
+    # def on_participant_connected(participant: rtc.RemoteParticipant):
+    #     """Called when a user joins the room"""
+    #     logger.info(f"User joined: {participant}")
+    #     try:
+    #         # Save user to database
+    #         user_id = db.create_user(name=participant)
+    #         logger.info(f"User saved to database with ID: {user_id}")
+    #     except Exception as e:
+    #         logger.error(f"Error saving user to database: {e}")    
             
-       # Alternative approach: Handle when participant metadata is updated
-    @ctx.room.on("participant_metadata_changed") 
-    def on_participant_metadata_changed(participant: rtc.RemoteParticipant, prev_metadata: str):
-        """Called when participant metadata changes - useful if name comes later"""
-        logger.info(f"Participant metadata changed for {participant}: {participant}")
-        # You can extract additional user info from metadata if needed
+    #    # Alternative approach: Handle when participant metadata is updated
+    # @ctx.room.on("participant_metadata_changed") 
+    # def on_participant_metadata_changed(participant: rtc.RemoteParticipant, prev_metadata: str):
+    #     """Called when participant metadata changes - useful if name comes later"""
+    #     logger.info(f"Participant metadata changed for {participant}: {participant}")
+    #     # You can extract additional user info from metadata if needed
 
-        # IMPORTANT: Check for participants that joined before agent was ready
-        logger.info(f"Checking for existing participants in room: {ctx.room.name}")
-    
+    #     # IMPORTANT: Check for participants that joined before agent was ready
+    #     logger.info(f"Checking for existing participants in room: {ctx.room.name}")
     # for participant in ctx.room.remote_participants:
     #     logger.info(f"Found existing participant: {participant.identity}")
     #     try:

@@ -177,14 +177,14 @@ class AppDatabase:
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None
-    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+    def get_user_by_email(self, email: str) -> int :
         """Fetch a user by their email address."""
         conn = self._connect()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
-        row = cursor.fetchone()
+        cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
+        user_id = cursor.lastrowid
         conn.close()
-        return dict(row) if row else None
+        return user_id
 
     def update_user_on_login(self, user_id: int, name: str):
         """Update user's name and last login time."""
@@ -290,7 +290,22 @@ class AppDatabase:
         conn.commit()
         conn.close()
         return True if conv_id else False
-    
+    def get_transcription(self, user_id: int) -> str:
+        conn = self.connect()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT transcription FROM conversations WHERE user_id=?", (user_id,))
+        rows = cursor.fetchall()  # returns a list of tuples, e.g., [('text1',), ('text2',)]
+
+        conn.close()
+
+        # Join all transcriptions into a single string
+        transcription_text = " ".join(row[0] for row in rows if row[0])
+        return transcription_text
+
+        
+        
+        
     # ---------------- FEEDBACK ----------------
     def create_feedback(self, user_id: int, appointment_id: int, rating: int, comments: str) -> int:
         conn = self._connect()
