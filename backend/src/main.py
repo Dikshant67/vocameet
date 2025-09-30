@@ -1,164 +1,145 @@
-# Standard library imports
-from datetime import datetime
-import logging
+# main.py
 import os
-from contextlib import asynccontextmanager
-import traceback
-from livekit import api
-
-# Third-party imports
-import dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request
+import logging
+from fastapi import FastAPI, Request, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from google.auth.transport import requests as google_requests
-from google.oauth2 import id_token
-import google_auth_oauthlib.flow
-from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
-from google.oauth2.credentials import Credentials
+from pydantic import BaseModel
+from jose import jwt, JWTError
 
-# --- NEW: Local application imports ---
-from AppDatabase import AppDatabase # Assuming your file is named app_database.py
 from calendar_service import CalendarService
+from AppDatabase import AppDatabase  # Your SQLite helper
+from agent import run_agent_with_user
 
-# --- CONFIG & LOGGING ---
-dotenv.load_dotenv()
-REDIRECT_URI = "postmessage"
-LOGGING_FORMAT = '%(levelname)s:     %(asctime)s - %(message)s'
-logging.basicConfig(level=logging.INFO, format=LOGGING_FORMAT)
+# -------------------------------
+# CONFIG & LOGGING
+# -------------------------------
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
-CLIENT_SECRETS_FILE = os.path.join(os.path.dirname(__file__), "client_secret.json")
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
-# ==============================================================================
-# --- NEW: DATABASE SETUP (Using AppDatabase Class) ---
-# ==============================================================================
-# Create a single, global instance of the AppDatabase.
-# The __init__ method of your class will handle table creation.
+NEXTAUTH_SECRET = os.environ.get("NEXTAUTH_SECRET")
+
+NEXTAUTH_ALGO = "HS256"  # NextAuth uses HS256 by default
+
+# -------------------------------
+# DATABASE
+# -------------------------------
 db = AppDatabase()
 logger.info("✅ AppDatabase initialized.")
 
-# --- REMOVED: All SQLAlchemy setup (engine, SessionLocal, Base, User model, get_db) ---
+# -------------------------------
+# FASTAPI APP
+# -------------------------------
+app = FastAPI()
 
-# --- MODELS ---
-class TokenData(BaseModel):
-    token: str
-    calendarToken: str | None = None
+# Session middleware (optional)
+app.add_middleware(SessionMiddleware, secret_key=NEXTAUTH_SECRET)
 
-class AuthCode(BaseModel):
-    code: str
-
-# --- LIFESPAN ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("--- Application starting up... ---")
-    yield
-    logger.info("--- Application shutting down... ---")
-
-
-app = FastAPI(lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key="gsdga3t235f655ghi8kuhjhlghlutuu454554jvbnvn")
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001"
+    ],  # adjust for frontend URLs
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# -------------------------------
+# MODELS
+# -------------------------------
+class SaveUserPayload(BaseModel):
+    name: str
+    email: str
+    picture: str | None = None
+    accessToken: str | None = None  # Google OAuth token if needed
+    refreshToken: str | None = None
+    userMetadata: dict | None = None
+
+# -------------------------------
+# HELPERS
+# -------------------------------
+def get_current_user(authorization: str = Header(...)):
+    """
+    Verify NextAuth JWT from frontend.
+    Expect header: Authorization: Bearer <jwt>
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Invalid Authorization header format")
+    
+    token = parts[1]
+    try:
+        payload = jwt.decode(token, NEXTAUTH_SECRET, algorithms=[NEXTAUTH_ALGO])
+        email = payload.get("email")
+        name = payload.get("name")
+        picture = payload.get("picture") or payload.get("image")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+        return {"email": email, "name": name, "picture": picture}
+    except JWTError as e:
+        logger.error(f"JWT verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+# -------------------------------
+# ROUTES
+# -------------------------------
 @app.get("/", tags=["root"])
 async def read_root():
     return {"message": "🎤 Voice-based Meeting Scheduler API v3.0"}
 
-# --- AUTH HELPERS ---
-def get_current_user(request: Request):
-    user = request.session.get("user")
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return user
+@app.post("/api/save-user")
+async def save_user(payload: SaveUserPayload, user: dict = Depends(get_current_user)):
+    """
+    Save or update user info securely in SQLite.
+    Requires valid JWT from NextAuth.
+    """
+    email = payload.email or user["email"]
+    name = payload.name or user["name"]
+    picture = payload.picture or user.get("picture")
+    access_token = payload.accessToken
+    refresh_token = payload.refreshToken
+    user_metadata = payload.userMetadata
 
-# --- AUTH ROUTES ---
-@app.post("/auth/google")
-async def google_auth(auth_code: AuthCode, request: Request):
-    try:
-        # Step 1: Exchange the authorization code for tokens
-        flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
-            CLIENT_SECRETS_FILE,
-            scopes=['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile', 'https://www.googleapis.com/auth/calendar']
+    existing_user = db.get_user_by_email(email)
+    if existing_user:
+        db.update_user(
+            email=email,
+            name=name,
+            picture=picture,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_metadata=user_metadata,
         )
-        flow.redirect_uri = REDIRECT_URI
-        flow.fetch_token(code=auth_code.code)
-        
-        credentials = flow.credentials
-        id_token_jwt = credentials.id_token
+        logger.info(f"Updated existing user: {email}")
+    else:
+        db.create_user(
+            name=name,
+            email=email,
+            picture=picture,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_metadata=user_metadata,
+        )
+        logger.info(f"Created new user: {email}")
 
-        # Step 2: Get user info from the ID token
-        id_info = id_token.verify_oauth2_token(id_token_jwt, google_requests.Request(), GOOGLE_CLIENT_ID)
-        
-        user_email = id_info['email']
-        user_name = id_info['name']
-        
-        # --- NEW DATABASE LOGIC using AppDatabase instance ---
-        db_user = db.get_user_by_email(user_email)
-
-        if db_user:
-            # User exists, update their last login time and info
-            logger.info(f"Existing user '{user_email}' logged in.")
-            db.update_user_on_login(user_id=db_user['id'], name=user_name)
-        else:
-            # New user, create a record
-            logger.info(f"New user '{user_email}' created and logged in.")
-            db.create_user(name=user_name, email=user_email)
-        # --- END OF NEW DATABASE LOGIC ---
-
-        # Step 3: Store credentials and user info in the session
-        request.session["user"] = {
-            "email": user_email,
-            "name": user_name,
-            "picture": id_info.get('picture'),
-        }
-        request.session["credentials"] = {
-            'token': credentials.token,
-            'refresh_token': credentials.refresh_token,
-            'token_uri': credentials.token_uri,
-            'client_id': credentials.client_id,
-            'client_secret': credentials.client_secret,
-            'scopes': credentials.scopes
-        }
-
-        logger.info(f"User {user_email} successfully authenticated.")
-        return {"name": user_name, "email": user_email, "picture": id_info.get('picture')}
-        
-    except Exception as e:
-        logger.error(f"Authentication error: {e}", exc_info=True)
-        traceback.print_exc()
-        raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
+    return {"message": "User saved successfully"}
 
 @app.post("/logout")
-async def logout(request: Request):
-    user_info = request.session.get("user")
-    
-    # --- NEW DATABASE LOGIC ---
-    if user_info and user_info.get("email"):
-        user_email = user_info["email"]
-        db.record_logout(user_email) # Use the new method
-        logger.info(f"User {user_email} logged out and timestamp recorded.")
-    # --- END OF NEW DATABASE LOGIC ---
-
-    request.session.clear()
+async def logout(user: dict = Depends(get_current_user)):
+    if user and user.get("email"):
+        db.record_logout(user["email"])
+        logger.info(f"User {user['email']} logged out and timestamp recorded.")
     return {"message": "Logged out"}
 
-# --- PROTECTED ROUTE EXAMPLE ---
 @app.get("/calendar/events")
-async def get_calendar_events(request: Request, start: str, end: str, timezone: str, user: dict = Depends(get_current_user)):
-    creds_dict = request.session.get("credentials")
-    if not creds_dict:
-        logger.warning(f"No stored credentials found for user {user.get('email')}")
-        raise HTTPException(status_code=401, detail="User credentials not found in session.")
-
-    try:
-        credentials = Credentials(**creds_dict)
-        calendar_service = CalendarService(credentials)
+async def get_calendar_events(start: str, end: str, timezone: str, user: dict = Depends(get_current_user)):
+    try:  
+        calendar_service = CalendarService()
         raw_events = calendar_service.list_meetings(max_results=10)
         availability = calendar_service.process_events(raw_events, timezone)
         return {"availability": availability, "user": user}
@@ -168,24 +149,12 @@ async def get_calendar_events(request: Request, start: str, end: str, timezone: 
 
 @app.get("/check")
 async def check_user(user: dict = Depends(get_current_user)):
-    """Check if a user is authenticated."""
     logger.info(f"User checked: {user}")
     return {"message": f"Hello, {user['name']}! You are logged in."}
 
-@app.get('/getToken')
-def getToken():
-    token = api.AccessToken("devkey", "secret") \
-        .with_identity("identity") \
-        .with_name("dikshant") \
-        .with_grants(api.VideoGrants(
-            room_join=True,
-            room="my-room",
-        ))
-    return token.to_jwt()
-
-# ==============================================================================
-# SERVER RUN
-# ==============================================================================
+# -------------------------------
+# RUN
+# -------------------------------
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="localhost", port=8000, reload=True)

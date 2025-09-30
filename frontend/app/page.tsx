@@ -1,23 +1,25 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useUser } from "@/app/context/UserContext";
+
 import Footer from "@/components/ui/Footer";
 import { Toaster } from "@/components/ui/sonner";
+import { useUser } from "@/app/context/UserContext";
 
 export default function LandingPage() {
   const router = useRouter();
   const { user } = useUser();
 
-  const handleGetStarted = () => {
-    if (user) {
-      // Already logged in → go to dashboard
-      router.push("/dashboard");
-    } else {
-      // Not logged in → go to login page
-      router.push("/dashboard");
-    }
-  };
+ const handleGetStarted = () => {
+  if (user) {
+    console.log("User is logged in:", user);
+    setTimeout(() => router.push("/dashboard"), 0); // forces navigation
+  } else {
+    router.push("/"); // optional fallback
+  }
+};
+
+  
 
   return (
  <div className="bg-slate-50 font-sans text-gray-800 leading-relaxed">

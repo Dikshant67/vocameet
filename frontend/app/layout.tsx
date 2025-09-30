@@ -8,6 +8,8 @@ import './globals.css';
 import { UserProvider } from '@/app/context/UserContext';
 import NavBar from '@/components/ui/NavBar';
 import { GoogleOAuthProvider } from '@react-oauth/google';
+import { SessionProvider } from 'next-auth/react';
+import { Providers } from './Providers';
 const publicSans = Public_Sans({
   variable: '--font-public-sans',
   subsets: ['latin'],
@@ -72,17 +74,24 @@ export default async function RootLayout({ children }: RootLayoutProps) {
       <body
         className={`${publicSans.variable} ${commitMono.variable} overflow-x-hidden antialiased`}
       >
-        <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID}>
+        {/* <SessionProvider>
+            <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID}>
 
-        <UserProvider>
-      <NavBar/>
-        {children}
-        
-        </UserProvider>
-        </GoogleOAuthProvider>
-        <div className="group fixed bottom-0 left-1/2 z-50 mb-2 -translate-x-1/2">
+                <UserProvider> */}
+                <Providers>
+
+
+                  <NavBar/>
+                  {children}
+                 <div className="group fixed bottom-0 left-1/2 z-50 mb-2 -translate-x-1/2">
           <ThemeToggle className="translate-y-20 transition-transform delay-150 duration-300 group-hover:translate-y-0" />
         </div>
+                </Providers>
+
+                {/* </UserProvider>
+            </GoogleOAuthProvider>
+        </SessionProvider> */}
+       
 
       </body>
     </html>
