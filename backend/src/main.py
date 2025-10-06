@@ -79,8 +79,17 @@ def get_current_user(authorization: str = Header(...)):
         email = payload.get("email")
         name = payload.get("name")
         picture = payload.get("picture") or payload.get("image")
+        
         if not email:
             raise HTTPException(status_code=401, detail="Invalid token payload")
+        existing_user = db.get_user_by_email(email)
+        if not existing_user :
+                db.create_user(
+                name=name,
+                email=email,
+
+                )
+                logger.info(f"Created new user for the First Request {email}")
         return {"email": email, "name": name, "picture": picture}
     except JWTError as e:
         logger.error(f"JWT verification failed: {e}")
@@ -92,42 +101,42 @@ def get_current_user(authorization: str = Header(...)):
 async def read_root():
     return {"message": "🎤 Voice-based Meeting Scheduler API v3.0"}
 
-@app.post("/api/save-user")
-async def save_user(payload: SaveUserPayload, user: dict = Depends(get_current_user)):
-    """
-    Save or update user info securely in SQLite.
-    Requires valid JWT from NextAuth.
-    """
-    email = payload.email or user["email"]
-    name = payload.name or user["name"]
-    picture = payload.picture or user.get("picture")
-    access_token = payload.accessToken
-    refresh_token = payload.refreshToken
-    user_metadata = payload.userMetadata
+# @app.post("/api/save-user")
+# async def save_user(payload: SaveUserPayload, user: dict = Depends(get_current_user)):
+#     """
+#     Save or update user info securely in SQLite.
+#     Requires valid JWT from NextAuth.
+#     """
+#     email = payload.email or user["email"]
+#     name = payload.name or user["name"]
+#     picture = payload.picture or user.get("picture")
+#     access_token = payload.accessToken
+#     refresh_token = payload.refreshToken
+#     user_metadata = payload.userMetadata
 
-    existing_user = db.get_user_by_email(email)
-    if existing_user:
-        db.update_user(
-            email=email,
-            name=name,
-            picture=picture,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user_metadata=user_metadata,
-        )
-        logger.info(f"Updated existing user: {email}")
-    else:
-        db.create_user(
-            name=name,
-            email=email,
-            picture=picture,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user_metadata=user_metadata,
-        )
-        logger.info(f"Created new user: {email}")
+#     existing_user = db.get_user_by_email(email)
+#     if existing_user:
+#         db.update_user(
+#             email=email,
+#             name=name,
+#             picture=picture,
+#             access_token=access_token,
+#             refresh_token=refresh_token,
+#             user_metadata=user_metadata,
+#         )
+#         logger.info(f"Updated existing user: {email}")
+#     else:
+#         db.create_user(
+#             name=name,
+#             email=email,
+#             picture=picture,
+#             access_token=access_token,
+#             refresh_token=refresh_token,
+#             user_metadata=user_metadata,
+#         )
+#         logger.info(f"Created new user: {email}")
 
-    return {"message": "User saved successfully"}
+#     return {"message": "User saved successfully"}
 
 @app.post("/logout")
 async def logout(user: dict = Depends(get_current_user)):

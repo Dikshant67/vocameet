@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { ChevronDownIcon } from "@heroicons/react/24/solid";
 import { useUser } from "@/app/context/UserContext";
+import { image } from "@heroui/react";
 
 export default function GoogleSignInButton() {
   const { user, setUser } = useUser();
@@ -18,7 +19,7 @@ useEffect(() => {
     const newUser = {
       name: session.user.name || "",
       email: session.user.email || "",
-      picture: session.user.image || "",
+      image: session.user.image || "",
     };
     // Only update if different from current context
     if (!user || user.email !== newUser.email) {
@@ -52,10 +53,11 @@ useEffect(() => {
       {user ? (
         <div className="relative flex items-center gap-3">
           <img
-            src={user.picture}
+            src={user.image && null}
             alt="Profile"
             className="h-8 w-8 cursor-pointer rounded-full"
           />
+          
           <div className="flex items-center gap-1">
             <span className="font-medium">{user.name}</span>
             <button

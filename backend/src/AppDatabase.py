@@ -19,7 +19,7 @@ class AppDatabase:
         self._initialize_db()
 
     def _connect(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -28,15 +28,15 @@ class AppDatabase:
         conn = self._connect()
         cursor = conn.cursor()
 
-        # Users
+      # Users
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             gender TEXT,
             date_of_birth TIMESTAMP,
-            phone TEXT ,
-            email TEXT ,
+            phone TEXT,
+            email TEXT UNIQUE,
             preferred_language TEXT DEFAULT 'en',
             other_languages TEXT,
             city TEXT,
@@ -162,7 +162,7 @@ class AppDatabase:
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO users (name, email, phone) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO users (name, email, phone) VALUES (?, ?, ?)",
             (name, email, phone),
         )
         user_id = cursor.lastrowid
@@ -177,14 +177,15 @@ class AppDatabase:
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None
-    def get_user_by_email(self, email: str) -> int :
-        """Fetch a user by their email address."""
+    def get_user_by_email(self, email: str) -> int | None:
+        """Fetch a user id by their email address."""
         conn = self._connect()
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
-        user_id = cursor.lastrowid
+        cursor.execute("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", (email,))
+        row = cursor.fetchone()
         conn.close()
-        return user_id
+        return row[0] if row else None
+
 
     def update_user_on_login(self, user_id: int, name: str):
         """Update user's name and last login time."""
@@ -291,7 +292,7 @@ class AppDatabase:
         conn.close()
         return True if conv_id else False
     def get_transcription(self, user_id: int) -> str:
-        conn = self.connect()
+        conn = self._connect()
         cursor = conn.cursor()
 
         cursor.execute("SELECT transcription FROM conversations WHERE user_id=?", (user_id,))

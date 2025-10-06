@@ -37,12 +37,34 @@ load_dotenv()
 db=AppDatabase()
 @dataclass
 class UserData:
-    user_name: str
-    meeting_date : str
-    meeting_title : str
-    meeting_attendee : str
-    transcription : str
-    
+    """ A class to store user information during the call"""
+    session : AgentSession =None
+    ctx: Optional[JobContext] = None
+    user_id : Optional[int]=None
+    user_name: Optional[str]=None
+    meeting_date : Optional[str]=None
+    meeting_title : Optional[str]=None
+    meeting_attendee : Optional[str]=None
+    last_conversation_for_reference : Optional[str]=None
+    user_email : Optional[str]=None
+    user_gender: Optional[str]=None 
+    user_age:Optional[int]=None
+    def is_identified(self) -> bool:
+        """Check if the user is identified."""
+        return self.user_name is not None 
+
+    def reset(self) -> None:
+        """Reset customer information."""
+        self.user_name = None
+     
+
+    def summarize(self) -> str:
+        """Return a summary of the user data."""
+        if self.is_identified():
+            return f"User: {self.user_name}  Email: {self.user_email} Age : {self.user_age} Gender : {self.user_gender}"
+        else:
+            return "User not yet identified."
+        
 RunContext_T=RunContext[UserData]
     
 def run_agent_with_user(user: dict):
@@ -58,36 +80,43 @@ class AppointmentSchedulingAssistant(Agent):
         now = datetime.datetime.now(datetime.timezone.utc).astimezone() # Timezone-aware
         self.transcriptions : List[str] =[] 
         self.transcription_buffer : str = ""
-        current_date_str = now.strftime("%A, %B %d, %Y")
-        super().__init__(
-            instructions=f"""You are a friendly and helpful voice AI assistant designed for managing meetings . 
-            The current date and time is {current_date_str}.
-            When you first connect,Greet user with a friendly greeting and offer a friendly welcome. 
 
+        current_date_str = now.strftime("%A, %B %d, %Y")
+       
+        self.base_instructions=f"""You are a friendly and helpful voice AI assistant designed for managing meetings . 
+            The current date and time is {current_date_str}.
+            When you first connect,Greet user with a friendly greeting and offer a friendly welcome.for example if users name is Arun Kumar,Hi Arun Kumar
+            If you have user's name at the time or greeting add the name too in while greeting the user. 
             **CRITICAL INSTRUCTION: Your responses MUST be in plain text only. NEVER use any special formatting, including asterisks, bolding, italics, or bullet points.**
             Do not accept the dates and time in the past suggest them to use in future dates and times.
             Do not read ,refer asterisk symbol in any context.
             You always ask questions one at a time.
             You warmly greet users, offer a friendly welcome, and are ready to assist with scheduling. 
-            You ask details to the user one at a time.
+            You ask details to the user one at a time
             Your responses are clear, concise, and to the point, without complex formatting or punctuation. You are curious, friendly, 
             and have a sense of humor. Your goal is to provide a smooth and efficient user experience for all meeting scheduling needs""",
-        )
+        super().__init__(instructions=self.base_instructions)
 
     # all functions annotated with @function_tool will be passed to the LLM when this
     # agent is active
-    def run_agent_with_user(user_id: str):
-    # Your logic here
-        print(f"Running agent for user: {user_id}")
-        # Simulate fetching or processing user data
-        user_data = {
-            "user_id": user_id,
-            "preferences": ["AI", "Python", "FastAPI"]
-        }
+    # def run_agent_with_user(user_id: str):
+    # # Your logic here
+    #     print(f"Running agent for user: {user_id}")
+    #     # Simulate fetching or processing user data
+    #     user_data = {
+    #         "user_id": user_id,
+    #         "preferences": ["AI", "Python", "FastAPI"]
+    #     }
     
-        # Do something with user_data...
-        return f"Processed data for user {user_data['user_id']}"
-
+    #     # Do something with user_data...
+    #     return f"Processed data for user {user_data['user_id']}"
+    def append_instructions(self, additional_instructions: str):  
+        """Append new instructions to existing ones."""  
+        current_instructions = self.base_instructions  
+        new_instructions = f"{current_instructions}\n\nAdditional instructions: {additional_instructions}"  
+        self.update_instructions(new_instructions)  
+        logger.info(new_instructions)
+        self.base_instructions = new_instructions  # Keep track for future appends
     @function_tool
     async def lookup_weather(self, context: RunContext_T, location: str):
         """Use this tool to look up current weather information in the given location.
@@ -101,6 +130,15 @@ class AppointmentSchedulingAssistant(Agent):
         logger.info(f"Looking up weather for {location}")
 
         return "sunny with a temperature of 70 degrees."
+    @function_tool
+    async def get_the_summary_of_user_info(self,context: RunContext_T)-> str:
+        """Used to get the summary of the user Details such as Name, Age, Gender"""
+        # safely extract values with defaults
+        name = getattr(context.userdata, "user_name", None) or "Unknown"
+        age = getattr(context.userdata, "user_age", None) or "N/A"
+        gender = getattr(context.userdata, "user_gender", None) or "Not specified"
+
+        return f"User's Name is {name}, Age is {age}, Gender is {gender}."
     @function_tool
     async def get_current_date(self,context : RunContext_T) -> str:
         """Used to get the current date and time."""
@@ -338,80 +376,46 @@ class AppointmentSchedulingAssistant(Agent):
             str: Confirmation message with updated meeting link.
         """
         link = calendar_service.reschedule_meeting(event_id, new_start, new_end)
+    
         return f"Meeting rescheduled:" 
+
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
 
 async def entrypoint(ctx: JobContext):
-    # Logging setup
-    # Add any other context you want in all log entries here
+    # Initialize user data with context
+    userdata = UserData(ctx=ctx)
     
+    appointment_scheduling_assistant = AppointmentSchedulingAssistant(ctx)
     ctx.log_context_fields = {
         "room": ctx.room.name,
-        
-        # "participant": ctx.room.local_participant.identity,
-        # "job": ctx.job.id,
-        # "userdata": ctx.proc.userdata,
     }
-
-    # Set up a voice AI pipeline using OpenAI, Cartesia, Deepgram, and the LiveKit turn detector
-    session = AgentSession(
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all providers at https://docs.livekit.io/agents/integrations/llm/
+    session = AgentSession[UserData](
+        userdata=userdata,
         llm=openai.LLM.with_azure(
         azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"), # or AZURE_OPENAI_ENDPOINT
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"), 
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION"), # or OPENAI_API_VERSION
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION"), 
     ),
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all providers at https://docs.livekit.io/agents/integrations/stt/
-        
-        #  stt=deepgram.STT(model="nova-3", language="multi"),
         stt = azure.STT(speech_key=os.getenv("AZURE_SPEECH_KEY"), speech_region=os.getenv("AZURE_SPEECH_REGION"),language="en-IN"),
         tts = azure.TTS(speech_key=os.getenv("AZURE_SPEECH_KEY"), speech_region=os.getenv("AZURE_SPEECH_REGION"),voice="en-IN-AartiNeural"),
-        #voice="mr-IN-AarohiNeural"
-        #language="mr-IN"
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all providers at https://docs.livekit.io/agents/integrations/tts/
-        # tts=cartesia.TTS(voice="6f84f4b8-58a2-430c-8c79-688dad597532"),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
-
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead:
-    # session = AgentSession(
-    #     # See all providers at https://docs.livekit.io/agents/integrations/realtime/
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
-
-    # sometimes background noise could interrupt the agent session, these are considered false positive interruptions
-    # when it's detected, you may resume the agent's speech
-
-        # Handle user joining the room
-    @session.on("agent_false_interruption")
-    def _on_agent_false_interruption(ev: AgentFalseInterruptionEvent):
-        logger.info("false positive interruption, resuming")
-        session.generate_reply(instructions=ev.extra_instructions or NOT_GIVEN)
-
-    # Metrics collection, to measure pipeline performance
-    # For more information, see https://docs.livekit.io/agents/build/metrics/
-    usage_collector = metrics.UsageCollector()
-    # @session.on("speech_created")
-    # def _on_speech_created(ev: SpeechCreatedEvent):
-    #     logger.info(f"Speech created: {ev.speech_event.text}")
-
-    @session.on("metrics_collected")
-    def _on_metrics_collected(ev: MetricsCollectedEvent):
-        metrics.log_metrics(ev.metrics)
-        logger.info("metrics printed on console -----------------------")
-        usage_collector.collect(ev.metrics)
+    
+    # @session.on("agent_false_interruption")
+    # def _on_agent_false_interruption(ev: AgentFalseInterruptionEvent):
+    #     logger.info("false positive interruption, resuming")
+    #     session.generate_reply(instructions=ev.extra_instructions or NOT_GIVEN)
+    # usage_collector = metrics.UsageCollector()
+    # @session.on("metrics_collected")
+    # def _on_metrics_collected(ev: MetricsCollectedEvent):
+    #     metrics.log_metrics(ev.metrics)
+    #     logger.info("metrics printed on console -----------------------")
+    #     usage_collector.collect(ev.metrics)
     @ctx.room.on("participant_disconnected")
     def on_participant_disconnected(participant: rtc.RemoteParticipant):
         """Called when a user leaves the room"""
@@ -420,149 +424,93 @@ async def entrypoint(ctx: JobContext):
     def on_participant_connected(participant: rtc.RemoteParticipant):
         """Called when a user enters the room"""
         logger.info(f"User Connected: {participant}" )  
-        
+
     @ctx.room.on("track_subscribed")
     def on_track_subscribed(
         track: rtc.Track,
         publication: rtc.RemoteTrackPublication,
         participant: rtc.RemoteParticipant,
-    ):
-        logger.info("track subscribed: %s", publication.sid)
-
-    # By default, autosubscribe is enabled. The participant will be subscribed to
-    # all published tracks in the room
-       
-        logger.info("connected to room %s", ctx.room.name,"The room has the ",ctx.room.num_participants," participants..")
-
-        for identity, participant in ctx.room.remote_participants.items():
-            print(f"identity: {identity}")
-            print(f"participant: {participant}")
-            user_id=db.get_user_by_email(participant.identity)
-            if user_id:
-                transcript=db.get_transcription(user_id)
-                logger.info(transcript)
-                
-               
-            
-            # Now participant is the RemoteParticipant object, not a tuple
-            print(f"participant sid: {participant.sid}")
-            print(f"participant identity: {participant.identity}")
-            print(f"participant name: {participant.name}")
-            print(f"participant kind: {participant.kind}")
-            print(f"participant track publications: {participant.track_publications}")
-            for tid, publication in participant.track_publications.items():
-                print(f"\ttrack id: {tid}")
-                print(f"\t\ttrack publication: {publication}")
-                print(f"\t\ttrack kind: {publication.kind}")
-                print(f"\t\ttrack name: {publication.name}")
-                print(f"\t\ttrack source: {publication.source}")
-
-            print(f"participant metadata: {participant.metadata}")
-
-    # @session.on("participant_connected")
-    # def on_participant_connected(participant):
-    #     logger.info(f"Participant joined: {participant.metadata}")
-    # def on_participant_connected(participant):
-    #     logger.info(f"Participant joined:{ctx.room.local_participant} {ctx.room.local_participant.metadata} ")
-    async def log_usage():
-        summary = usage_collector.get_summary()
-        logger.info(f"Usage: {summary}")
-
-    ctx.add_shutdown_callback(log_usage)
-
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/integrations/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/integrations/avatar/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
-
-    # Start the session, which initializes the voice pipeline and warms up the models
-    
-    appointment_scheduling_assistant = AppointmentSchedulingAssistant(ctx)
-    logger.info(f"{RoomInputOptions.participant_identity}-----------------------$$$$$$$$$$$--------------$$$$$$$$$$")
-    # logger.info(f"{rtc.participant} : RTC Participant")
-  
-    # @session.on("user_joined")
-    # def save_user_data(user: ctx..RemoteParticipant):
-    #     logger.info(f"User joined: {user.identity}")
-    #     db.create_user(name=user.identity)
         
+    ):
+        if appointment_scheduling_assistant :
+            appointment_scheduling_assistant.session.userdata.user_name=participant.name
+            appointment_scheduling_assistant.session.userdata.user_email=participant.identity
+            if appointment_scheduling_assistant.session.userdata.is_identified():
+                user_id=db.get_user_by_email(participant.identity)
+                userdata.user_id=user_id
+                logger.info(f"User found {user_id}")
+                transcript=db.get_transcription(user_id)
+                appointment_scheduling_assistant.session.userdata.last_conversation_for_reference=transcript
+                appointment_scheduling_assistant.session.userdata.user_age=25
+                appointment_scheduling_assistant.session.userdata.user_gender="MALE"
+                instructions = (
+                    f"You are assisting {participant.name} "
+                    f"a {appointment_scheduling_assistant.session.userdata.user_age}-year-old "
+                    f"{appointment_scheduling_assistant.session.userdata.user_gender}. "
+                    f"Their email is {appointment_scheduling_assistant.session.userdata.user_email}. "
+                )
 
-          
+                # If you also want to include their last conversation transcript:
+                if appointment_scheduling_assistant.session.userdata.last_conversation_for_reference:
+                    instructions += (
+                        f"Here is the last conversation for context:\n"
+                        f"pick only the key terms from this text and use that as memory while talking with the user : {appointment_scheduling_assistant.session.userdata.last_conversation_for_reference}\n"
+                    )
+
+               
+
+                    appointment_scheduling_assistant.append_instructions(instructions)
+                 
+        
+    
+  
+ 
+        
+       
     await session.start(
-        agent=AppointmentSchedulingAssistant(ctx),
+        agent=appointment_scheduling_assistant,
         room=ctx.room,
-        room_input_options=RoomInputOptions(
-            # LiveKit Cloud enhanced noise cancellation
-            # - If self-hosting, omit this parameter
-            # - For telephony applications, use `BVCTelephony` for best results
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
+        room_input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVC(),),
     )
+    # await ctx.connect()
 
-    # Join the room and connect to the user
-    await ctx.connect()
-    # @session.on("conversation_item_added")
-    # async def get_user_name(participant : JobContext.remote_participants):
-    #     logger.info(f"{participant} connected ")
 
-    # @ctx.room.on("participant_connected")
-    # def on_participant_connected(participant: rtc.RemoteParticipant):
-    #     """Called when a user enters the room"""
-    #     logger.info(f"User Connected: {participant}" )
     @session.on("user_input_transcribed")
     def on_transcript(transcript):
-        if appointment_scheduling_assistant.transcription_buffer:
-            appointment_scheduling_assistant.transcription_buffer+=" "+ transcript.transcript
-        else:
-            appointment_scheduling_assistant.transcription_buffer = transcript.transcript
-        logger.info(f"Transcription Buffer: {appointment_scheduling_assistant.transcription_buffer}")
-        sentence_endings=re.findall(r'[.!?]',appointment_scheduling_assistant.transcription_buffer)
-        if len(sentence_endings)>=3:
-            sentence_count=0
-            last_pos=0
-            for match in re.finditer(r'[.!?]',appointment_scheduling_assistant.transcription_buffer):
-                sentence_count+=1
-                if sentence_count ==3 :
-                    last_pos=match.end()
-                    break
-            two_sentences=appointment_scheduling_assistant.transcription_buffer[:last_pos].strip()# Extract the second sentence
-            appointment_scheduling_assistant.transcription_buffer =appointment_scheduling_assistant.transcription_buffer[last_pos:].strip()# Remove the second sentence from the buffer
-            appointment_scheduling_assistant.transcriptions.append(two_sentences)# Append the second sentence to the list
-            logger.info(f"Processing for notes : {two_sentences}")
-            if(len( two_sentences)>5  and two_sentences not in appointment_scheduling_assistant.transcriptions):
-             db.add_transcription(1,two_sentences)
-    # @ctx.room.on("participant_connected")
-    # def on_participant_connected(participant: rtc.RemoteParticipant):
-    #     """Called when a user joins the room"""
-    #     logger.info(f"User joined: {participant}")
-    #     try:
-    #         # Save user to database
-    #         user_id = db.create_user(name=participant)
-    #         logger.info(f"User saved to database with ID: {user_id}")
-    #     except Exception as e:
-    #         logger.error(f"Error saving user to database: {e}")    
-            
-    #    # Alternative approach: Handle when participant metadata is updated
-    # @ctx.room.on("participant_metadata_changed") 
-    # def on_participant_metadata_changed(participant: rtc.RemoteParticipant, prev_metadata: str):
-    #     """Called when participant metadata changes - useful if name comes later"""
-    #     logger.info(f"Participant metadata changed for {participant}: {participant}")
-    #     # You can extract additional user info from metadata if needed
+        text = transcript.transcript.strip()
 
-    #     # IMPORTANT: Check for participants that joined before agent was ready
-    #     logger.info(f"Checking for existing participants in room: {ctx.room.name}")
-    # for participant in ctx.room.remote_participants:
-    #     logger.info(f"Found existing participant: {participant.identity}")
-    #     try:
-    #         # Save user to database
-    #         user_id = db.create_user(name=participant)
-    #         logger.info(f"Existing user saved to database with ID: {user_id}")
-    #     except Exception as e:
-    #         logger.error(f"Error saving existing user to database: {e}")
-    
+        # If buffer exists and new text is just repeating last part, ignore
+        if appointment_scheduling_assistant.transcription_buffer:
+            if text.lower().startswith(appointment_scheduling_assistant.transcription_buffer.lower()):
+                # It's just an incremental update → replace instead of appending
+                appointment_scheduling_assistant.transcription_buffer = text
+            else:
+                # New phrase → append
+                appointment_scheduling_assistant.transcription_buffer += " " + text
+        else:
+            appointment_scheduling_assistant.transcription_buffer = text
+
+        logger.info(f"Transcription Buffer: {appointment_scheduling_assistant.transcription_buffer}")
+
+        # Split into sentences
+        sentences = re.split(r'(?<=[.!?])\s+', appointment_scheduling_assistant.transcription_buffer.strip())
+
+        # Keep only incomplete part in buffer
+        complete_sentences = sentences[:-1]
+        appointment_scheduling_assistant.transcription_buffer = sentences[-1] if sentences else ""
+
+        for s in complete_sentences:
+            s_clean = s.strip()
+
+            # Normalize for deduplication
+            normalized = re.sub(r'\s+', ' ', s_clean.lower())
+
+            if len(normalized) > 5 and normalized not in appointment_scheduling_assistant.transcriptions:
+                appointment_scheduling_assistant.transcriptions.append(normalized)
+                logger.info(f"Processing for notes : {s_clean}")
+                if appointment_scheduling_assistant.session.userdata.user_id:
+                    db.add_transcription(appointment_scheduling_assistant.session.userdata.user_id, s_clean)
+
     if not ctx.room.remote_participants:
         logger.info("No existing participants found - waiting for new connections")
 if __name__ == "__main__":
