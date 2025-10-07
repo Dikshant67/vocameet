@@ -11,7 +11,8 @@ interface ProvidersProps {
 
 export function Providers({ children }: ProvidersProps) {
   return (
-    <SessionProvider>
+    <SessionProvider   refetchInterval={1 * 60} // fetch session every 5 mins
+  refetchOnWindowFocus={false}>
       <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!}>
         <UserProvider>{children}</UserProvider>
       </GoogleOAuthProvider>

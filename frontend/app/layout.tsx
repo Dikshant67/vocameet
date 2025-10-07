@@ -74,13 +74,8 @@ export default async function RootLayout({ children }: RootLayoutProps) {
       <body
         className={`${publicSans.variable} ${commitMono.variable} overflow-x-hidden antialiased`}
       >
-        {/* <SessionProvider>
-            <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID}>
-
-                <UserProvider> */}
+        
                 <Providers>
-
-
                   <NavBar/>
                   {children}
                  <div className="group fixed bottom-0 left-1/2 z-50 mb-2 -translate-x-1/2">
@@ -88,9 +83,7 @@ export default async function RootLayout({ children }: RootLayoutProps) {
         </div>
                 </Providers>
 
-                {/* </UserProvider>
-            </GoogleOAuthProvider>
-        </SessionProvider> */}
+               
        
 
       </body>
