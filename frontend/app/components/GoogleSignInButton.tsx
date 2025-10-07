@@ -53,7 +53,7 @@ useEffect(() => {
       {user ? (
         <div className="relative flex items-center gap-3">
           <img
-            src={user.image && null}
+        
             alt="Profile"
             className="h-8 w-8 cursor-pointer rounded-full"
           />

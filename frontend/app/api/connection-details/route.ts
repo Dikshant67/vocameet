@@ -7,6 +7,9 @@ import {
 import { RoomConfiguration } from "@livekit/protocol";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { getSessionGuid } from '@/lib/session';
+
+
 
 // NOTE: environment variables must be defined in `.env.local`
 const API_KEY = process.env.LIVEKIT_API_KEY;
@@ -27,16 +30,17 @@ export async function POST(req: Request) {
     if (!LIVEKIT_URL) throw new Error("LIVEKIT_URL is not defined");
     if (!API_KEY) throw new Error("LIVEKIT_API_KEY is not defined");
     if (!API_SECRET) throw new Error("LIVEKIT_API_SECRET is not defined");
-
+    const sessionGuid = getSessionGuid();
     // ✅ get the user from the NextAuth session
     const session = await getServerSession(authOptions);
-    console.log(session);
+    // console.log(session);
+    
     if (!session || !session.user) {
       console.log("Unauthorized")
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
-    const { name, email } = session.user;
+    const { name, email , session_guid} = session.user;
 
     // Parse agent configuration from request body
     const body = await req.json();
@@ -52,8 +56,9 @@ export async function POST(req: Request) {
     const participantToken = await createParticipantToken(
       {
         identity: participantIdentity,
-        name: participantName,
-        metadata: JSON.stringify({ agentName }),
+        name: participantName, 
+    
+        metadata: JSON.stringify({ agentName,sessionGuid }),
       },
       roomName,
       agentName

@@ -8,6 +8,7 @@ declare module "next-auth" {
       email?: string;
       name?: string;
       image?: string;
+      session_guid?: string;
     } & DefaultSession["user"];
     jwt?: string; // our custom signed JWT
     accessToken?: string;

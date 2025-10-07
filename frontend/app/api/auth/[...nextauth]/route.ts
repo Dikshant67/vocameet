@@ -2,6 +2,7 @@
 import NextAuth, { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import jwt from "jsonwebtoken";
+import { v4 as uuidv4 } from 'uuid';
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -24,6 +25,7 @@ export const authOptions: NextAuthOptions = {
         token.email = user.email;
         token.name = user.name;
         token.picture = user.image;
+        token.session_guid = token.session_guid || uuidv4();
       }
       return token;
     },
@@ -35,6 +37,7 @@ export const authOptions: NextAuthOptions = {
           email: token.email,
           name: token.name,
           picture: token.picture,
+          session_guid: token.session_guid, 
         },
         process.env.NEXTAUTH_SECRET!, // must match FastAPI NEXTAUTH_SECRET
         {
@@ -50,6 +53,7 @@ export const authOptions: NextAuthOptions = {
         email: token.email as string,
         name: token.name as string,
         image: token.picture as string,
+        session_guid: token.session_guid as string, 
       };
 
       return session;

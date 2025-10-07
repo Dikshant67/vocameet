@@ -111,16 +111,17 @@ class AppDatabase:
 
         # Conversations
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            transcription TEXT,
-            response_text TEXT,
-            audio_file_path TEXT,
-            sentiment TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        )
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    session_guid TEXT UNIQUE,
+                    transcription TEXT,
+                    response_text TEXT,
+                    audio_file_path TEXT,
+                    sentiment TEXT,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+            )
         ''')
 
         # Feedback
@@ -150,8 +151,6 @@ class AppDatabase:
             FOREIGN KEY(user_id) REFERENCES users(id)
         )
         ''')
-
-
 
         conn.commit()
         conn.close()
@@ -212,7 +211,51 @@ class AppDatabase:
         cursor.execute("UPDATE users SET last_logout_on = ? WHERE email = ?", (datetime.utcnow(), email))
         conn.commit()
         conn.close()
+    def add_user_gender_and_dob(self, user_id: int, gender: str = None, age: int = None) -> bool:
+        conn = self._connect()
+        cursor = conn.cursor()
 
+        # Calculate DOB only if age is provided
+        date_of_birth = None
+        if age is not None:
+            current_year = datetime.now().year
+            birth_year = current_year - age
+            # Set DOB as June 1st of the calculated birth year
+            date_of_birth = datetime(birth_year, 6, 1)
+
+        # Check if user exists
+        cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+        existing_user = cursor.fetchone()
+
+        if not existing_user:
+            # Insert new user record
+            cursor.execute(
+                """
+                INSERT INTO users (id, gender, date_of_birth)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, gender, date_of_birth),
+            )
+        else:
+            # Build dynamic update query
+            fields = []
+            params = []
+
+            if gender is not None:
+                fields.append("gender = ?")
+                params.append(gender)
+            if date_of_birth is not None:
+                fields.append("date_of_birth = ?")
+                params.append(date_of_birth)
+
+            if fields:
+                params.append(user_id)
+                query = f"UPDATE users SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+                cursor.execute(query, tuple(params))
+
+        conn.commit()
+        conn.close()
+        return True
     # ---------------- EXPERTS ----------------
     def create_expert(self, name: str, specialty: str, email: str) -> int:
         conn = self._connect()
@@ -282,15 +325,71 @@ class AppDatabase:
     
     #-----------------CONVERSATIONS-----------------
     
-    def add_transcription(self ,user_id:int,transcription:str)->int:
-        conn=self._connect()
-        cursor=conn.cursor()
-        cursor.execute(
-            "INSERT INTO conversations (user_id,transcription) VALUES (?,?)",(user_id,transcription),)
-        conv_id=cursor.execute("select * from conversations where user_id=? ",(user_id,))
+    def add_transcription(self, guid: str, transcription: str) -> bool:
+        conn = self._connect()
+        cursor = conn.cursor()
+
+        # Check if a record already exists for this session guid
+        cursor.execute("SELECT id FROM conversations WHERE session_guid = ?", (guid,))
+        existing = cursor.fetchone()
+
+        if existing:
+            # Update existing record
+            cursor.execute(
+                "UPDATE conversations SET transcription = ? WHERE session_guid = ?",
+                (transcription, guid),
+            )
+        else:
+            # Insert new record for this guid
+            cursor.execute(
+                "INSERT INTO conversations (session_guid, transcription) VALUES (?, ?)",
+                (guid, transcription),
+            )
+
         conn.commit()
         conn.close()
-        return True if conv_id else False
+        return True
+    def add_transcription_with_guid(self, user_id: int, new_transcription: str, session_guid: str) -> None:
+        """
+        Add a new transcription to an existing session row or create a new session.
+        Appends transcription to existing ones to keep all in a single row.
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)  # Use your DB path
+            cursor = conn.cursor()
+
+            # Check if session row exists
+            cursor.execute("SELECT transcription FROM conversations WHERE session_guid = ?", (session_guid,))
+            row = cursor.fetchone()
+
+            if row:
+                # Append to existing transcription, avoid duplicates
+                existing_transcription = row[0] or ""
+                # Optional: skip if exact transcription already exists
+                if new_transcription.strip() not in existing_transcription:
+                    updated_transcription = (existing_transcription + " " + new_transcription).strip()
+                    cursor.execute("""
+                        UPDATE conversations
+                        SET transcription = ?, last_updated = CURRENT_TIMESTAMP
+                        WHERE session_guid = ?
+                    """, (updated_transcription, session_guid))
+            else:
+                # Insert new row for session
+                cursor.execute("""
+                    INSERT INTO conversations (user_id, session_guid, transcription)
+                    VALUES (?, ?, ?)
+                """, (user_id, session_guid, new_transcription))
+
+            conn.commit()
+            logger.info(f"Saved transcription to DB (user_id={user_id}, session_guid={session_guid}).")
+
+        except sqlite3.Error as e:
+            logger.error(f"SQLite error while adding transcription: {e}")
+
+        finally:
+            cursor.close()
+            conn.close()
+
     def get_transcription(self, user_id: int) -> str:
         conn = self._connect()
         cursor = conn.cursor()
@@ -381,3 +480,4 @@ class AppDatabase:
         conn.close()
         logger.info(f"Deleted {deleted} tokens for user_id={user_id}")
         return deleted
+    
