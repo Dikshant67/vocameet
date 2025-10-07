@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { ChevronDownIcon } from "@heroicons/react/24/solid";
 import { useUser } from "@/app/context/UserContext";
-
+import Image from "next/image";
 
 export default function GoogleSignInButton() {
   const { user, setUser } = useUser();
@@ -23,6 +23,7 @@ useEffect(() => {
 
   // Step 2: When session updates
   if (status === "authenticated" && session?.user) {
+       {console.log(user?.image)}
     const newUser = {
       name: session.user.name || "",
       email: session.user.email || "",
@@ -51,6 +52,7 @@ useEffect(() => {
 
   const handleLogin = async () => {
     try {
+
       await signIn("google", { callbackUrl: "/" });
     } catch (error) {
       console.error("NextAuth login error:", error);
@@ -75,13 +77,16 @@ useEffect(() => {
         <span className="text-gray-500 text-sm">Loading...</span>
       </div>
     ) : user ? (
+   
       // Authenticated state
       <div className="relative flex items-center gap-3">
-        <img
-          src={user?.image || "/user.png"}
+        <Image
+          src={user?.image || "./user.png"}
           alt="Profile"
+          width={32} // 👈 Must provide width
+        height={32} // 👈 Must provide height
           className="h-8 w-8 cursor-pointer rounded-full"
-          onError={(e) => (e.currentTarget.src = "/user.png")}
+        
         />
         <div className="flex items-center gap-1">
           <span className="font-medium">{user.name}</span>
