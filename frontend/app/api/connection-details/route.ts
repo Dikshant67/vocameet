@@ -1,8 +1,17 @@
-import { NextResponse } from 'next/server';
-import { AccessToken, type AccessTokenOptions, type VideoGrant } from 'livekit-server-sdk';
-import { RoomConfiguration } from '@livekit/protocol';
+import { NextResponse } from "next/server";
+import {
+  AccessToken,
+  type AccessTokenOptions,
+  type VideoGrant,
+} from "livekit-server-sdk";
+import { RoomConfiguration } from "@livekit/protocol";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { getSessionGuid } from '@/lib/session';
 
-// NOTE: you are expected to define the following environment variables in `.env.local`:
+
+
+// NOTE: environment variables must be defined in `.env.local`
 const API_KEY = process.env.LIVEKIT_API_KEY;
 const API_SECRET = process.env.LIVEKIT_API_SECRET;
 const LIVEKIT_URL = process.env.LIVEKIT_URL;
@@ -19,15 +28,20 @@ export type ConnectionDetails = {
 
 export async function POST(req: Request) {
   try {
-    if (LIVEKIT_URL === undefined) {
-      throw new Error('LIVEKIT_URL is not defined');
+    if (!LIVEKIT_URL) throw new Error("LIVEKIT_URL is not defined");
+    if (!API_KEY) throw new Error("LIVEKIT_API_KEY is not defined");
+    if (!API_SECRET) throw new Error("LIVEKIT_API_SECRET is not defined");
+    const sessionGuid = getSessionGuid();
+    // ✅ get the user from the NextAuth session
+    const session = await getServerSession(authOptions);
+    // console.log(session);
+    
+    if (!session || !session.user) {
+      console.log("Unauthorized")
+      return new NextResponse("Unauthorized", { status: 401 });
     }
-    if (API_KEY === undefined) {
-      throw new Error('LIVEKIT_API_KEY is not defined');
-    }
-    if (API_SECRET === undefined) {
-      throw new Error('LIVEKIT_API_SECRET is not defined');
-    }
+
+    const { name, email , session_guid} = session.user;
 
     // Parse agent configuration from request body
     const body = await req.json();
@@ -39,7 +53,12 @@ export async function POST(req: Request) {
     const roomName = `voice_assistant_room_${Math.floor(Math.random() * 10_000)}`;
 
     const participantToken = await createParticipantToken(
-      { identity: participantIdentity, name: participantName ,metadata: JSON.stringify({ agentName }) },
+      {
+        identity: participantIdentity,
+        name: participantName, 
+    
+        metadata: JSON.stringify({ agentName,sessionGuid }),
+      },
       roomName,
       agentName
     );

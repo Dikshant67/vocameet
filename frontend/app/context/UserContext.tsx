@@ -5,7 +5,7 @@ import { ReactNode, createContext, useContext, useEffect, useMemo, useState } fr
 type User = {
   name: string;
   email: string;
-  picture: string;
+  image: string;
 };
 
 type UserContextType = {

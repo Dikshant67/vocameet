@@ -121,180 +121,97 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# -------------------------------
+# MODELS
+# -------------------------------
+class SaveUserPayload(BaseModel):
+    name: str
+    email: str
+    picture: str | None = None
+    accessToken: str | None = None  # Google OAuth token if needed
+    refreshToken: str | None = None
+    userMetadata: dict | None = None
+
+# -------------------------------
+# HELPERS
+# -------------------------------
+def get_current_user(authorization: str = Header(...)):
+    """
+    Verify NextAuth JWT from frontend.
+    Expect header: Authorization: Bearer <jwt>
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Invalid Authorization header format")
+    
+    token = parts[1]
+    try:
+        payload = jwt.decode(token, NEXTAUTH_SECRET, algorithms=[NEXTAUTH_ALGO])
+        email = payload.get("email")
+        name = payload.get("name")
+        picture = payload.get("picture") or payload.get("image")
+        
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+        existing_user = db.get_user_by_email(email)
+        if not existing_user :
+                db.create_user(
+                name=name,
+                email=email,
+
+                )
+                logger.info(f"Created new user for the First Request {email}")
+        return {"email": email, "name": name, "picture": picture}
+    except JWTError as e:
+        logger.error(f"JWT verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+# -------------------------------
+# ROUTES
+# -------------------------------
 @app.get("/", tags=["root"])
 async def read_root():
     return {"message": "🎤 Voice-based Meeting Scheduler API v3.0"}
 
-# --- AUTH HELPERS ---
-def get_current_user(request: Request):
-    user = request.session.get("user")
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return user
+# @app.post("/api/save-user")
+# async def save_user(payload: SaveUserPayload, user: dict = Depends(get_current_user)):
+#     """
+#     Save or update user info securely in SQLite.
+#     Requires valid JWT from NextAuth.
+#     """
+#     email = payload.email or user["email"]
+#     name = payload.name or user["name"]
+#     picture = payload.picture or user.get("picture")
+#     access_token = payload.accessToken
+#     refresh_token = payload.refreshToken
+#     user_metadata = payload.userMetadata
 
-# --- AUTH ROUTES ---
-# @app.post("/auth/google")
-# async def google_auth(data: TokenData, request: Request):
-#     try:
-#         logger.info(data)
-#         # Verify token with Google
-#         id_info = google.oauth2.id_token.verify_oauth2_token(
-#             data.token,
-#             google.auth.transport.requests.Request(),
-#             audience=GOOGLE_CLIENT_ID
+#     existing_user = db.get_user_by_email(email)
+#     if existing_user:
+#         db.update_user(
+#             email=email,
+#             name=name,
+#             picture=picture,
+#             access_token=access_token,
+#             refresh_token=refresh_token,
+#             user_metadata=user_metadata,
 #         )
+#         logger.info(f"Updated existing user: {email}")
+#     else:
+#         db.create_user(
+#             name=name,
+#             email=email,
+#             picture=picture,
+#             access_token=access_token,
+#             refresh_token=refresh_token,
+#             user_metadata=user_metadata,
+#         )
+#         logger.info(f"Created new user: {email}")
 
-#         # Save minimal info in session (what you need later)
-#         request.session["user"] = {
-#             "email": id_info.get("email"),
-#             "name": id_info.get("name"),
-#             "picture": id_info.get("picture"),
-#              "calendarToken": data.calendarToken,
-#         }
+#     return {"message": "User saved successfully"}
 
-#         return {"message": "Authenticated", "user": request.session["user"]}
-#     except Exception as e:
-#         raise HTTPException(status_code=401, detail=f"Invalid Google token: {e}")
-@app.post("/auth/google")
-async def google_auth(auth_code: AuthCode, request: Request, db: Session = Depends(get_db)):
-    try:
-        # Step 1: Exchange the authorization code for tokens
-        flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
-            CLIENT_SECRETS_FILE,
-            scopes=['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile', 'https://www.googleapis.com/auth/calendar']
-        )
-        flow.redirect_uri = REDIRECT_URI
-        logger.info(f"flow created: {flow}")
-
-        # Exchange the code for credentials
-        flow.fetch_token(code=auth_code.code)
-        
-        credentials = flow.credentials
-        logger.info(f"credentials object received: {credentials}")
-
-        # Now you have the tokens!
-        # --- THIS IS THE FIX ---
-        access_token = credentials.token
-        # ---------------------
-        refresh_token = credentials.refresh_token # This might be None if user has already granted consent
-        id_token_jwt = credentials.id_token
-
-        # Step 2: Get user info from the ID token
-        id_info = id_token.verify_oauth2_token(id_token_jwt, google_requests.Request(), GOOGLE_CLIENT_ID)
-        
-        user_email = id_info['email']
-        user_name = id_info['name']
-        user_picture = id_info['picture']   
-        # --- NEW DATABASE LOGIC ---
-        current_time = datetime.utcnow()
-        db_user = db.query(User).filter(User.email == user_email).first()
-
-        if db_user:
-            # User exists, update their last login time and info
-            logger.info(f"Existing user '{user_email}' logged in.")
-            db_user.last_login_time = current_time
-            db_user.name = user_name
-            db_user.picture = user_picture
-        else:
-            # New user, create a record
-            logger.info(f"New user '{user_email}' created and logged in.")
-            new_user = User(
-                email=user_email,
-                name=user_name,
-                picture=user_picture,
-                last_login_time=current_time,
-            )
-            db.add(new_user)
-        
-        db.commit()
-        # --- END OF NEW DATABASE LOGIC ---
-        # Step 3 (Example): Store credentials and user info in the session
-        request.session["user"] = {
-            "email": user_email,
-            "name": user_name,
-            "picture": user_picture,
-        }
-        request.session["credentials"] = {
-            'token': credentials.token,
-            'refresh_token': credentials.refresh_token,
-            'token_uri': credentials.token_uri,
-            'client_id': credentials.client_id,
-            'client_secret': credentials.client_secret,
-            'scopes': credentials.scopes
-        }
-
-        logger.info(f"User {user_email} successfully authenticated.")
-        # Return the user info to the frontend
-        return {"name": user_name, "email": user_email, "picture": user_picture}
-        
-    except Exception as e:
-        # This is the output we need to see!
-        print("---!!! AN ERROR OCCURRED !!!---")
-        print(f"The actual error is: {e}")
-        import traceback
-        traceback.print_exc() # This prints the full error stack
-# @app.get("/livekit/user-credentials/{user_email}")
-# async def get_user_credentials_for_agent(user_email: str, agent_key: str, db: Session = Depends(get_db)):
-#     """Endpoint for LiveKit agent to get user credentials"""
-    
-#     # Verify agent key (set this in your environment)
-#     AGENT_API_KEY = os.getenv("AGENT_API_KEY")
-#     if not AGENT_API_KEY or agent_key != AGENT_API_KEY:
-#         raise HTTPException(status_code=401, detail="Invalid agent key")
-    
-#     # Get user from database
-#     db_user = db.query(User).filter(
-#         User.email == user_email,
-#         User.is_active_session == 1
-#     ).first()
-    
-#     if not db_user:
-#         raise HTTPException(status_code=404, detail="User not found or not active")
-    
-#     # Get decrypted credentials
-#     credentials = db_user.get_credentials()
-#     if not credentials:
-#         raise HTTPException(status_code=404, detail="No credentials found for user")
-    
-#     return {
-#         "user": {
-#             "email": db_user.email,
-#             "name": db_user.name
-#         },
-#         "credentials": credentials
-#     }
-        
-@app.get("/livekit/user-credentials/{user_email}")
-async def get_user_credentials_for_agent(user_email: str, agent_key: str, db: Session = Depends(get_db)):
-    """Endpoint for LiveKit agent to get user credentials"""
-    
-    # Verify agent key (set this in your environment)
-    AGENT_API_KEY = os.getenv("AGENT_API_KEY")
-    if not AGENT_API_KEY or agent_key != AGENT_API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid agent key")
-    
-    # Get user from database
-    db_user = db.query(User).filter(
-        User.email == user_email,
-        User.is_active_session == 1
-    ).first()
-    
-    if not db_user:
-        raise HTTPException(status_code=404, detail="User not found or not active")
-    
-    # Get decrypted credentials
-    credentials = db_user.get_credentials()
-    if not credentials:
-        raise HTTPException(status_code=404, detail="No credentials found for user")
-    
-    return {
-        "user": {
-            "email": db_user.email,
-            "name": db_user.name
-        },
-        "credentials": credentials
-    }
-        
 @app.post("/logout")
 async def logout(request: Request, db: Session = Depends(get_db)):
     user_info = request.session.get("user")

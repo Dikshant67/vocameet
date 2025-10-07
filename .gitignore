@@ -2,3 +2,7 @@
 backend/config/credentials.json
 backend/src/token.json
 server/livekit-server.exe
+backend/livekit_info.md
+backend/src/app_data.db
+backend/src/vocameet.db
+
