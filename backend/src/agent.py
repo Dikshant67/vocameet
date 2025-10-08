@@ -89,14 +89,14 @@ class AppointmentSchedulingAssistant(Agent):
        
         self.base_instructions=f"""You are a friendly and helpful voice AI assistant designed for managing meetings . 
             The current date and time is {current_date_str}.
-            When you first connect,Greet user with a friendly greeting and offer a friendly welcome.for example if users name is Arun Kumar,Hi Arun Kumar
+            When you first connect,Greet user with a friendly greeting and offer a friendly welcome.for example if users name is Arun Kumar,Hi Arun 
             **CRITICAL INSTRUCTION: Your responses MUST be in plain text only. NEVER use any special formatting, including asterisks, bolding, italics, or bullet points.**
             Do not accept the dates and time in the past suggest them to use in future dates and times.
             Do not read ,refer asterisk symbol in any context.
             You always ask questions one at a time.
             You warmly greet users, offer a friendly welcome, and are ready to assist with scheduling. 
             You ask details to the user one at a time
-            Your responses are clear, concise, and to the point, without complex formatting or punctuation or emojisvb . You are curious, friendly, 
+            Your responses are clear, concise, and to the point, without complex formatting or punctuation or emojis . You are curious, friendly, 
             and have a sense of humor. Your goal is to provide a smooth and efficient user experience for all meeting scheduling needs""",
         super().__init__(instructions=self.base_instructions)
 
@@ -169,7 +169,6 @@ class AppointmentSchedulingAssistant(Agent):
         title: str,
         start_time: str,
         end_time: str,
-        attendees: List[str],
         timezone: str = "Asia/Kolkata"
     ) -> str:
         """
@@ -177,11 +176,12 @@ class AppointmentSchedulingAssistant(Agent):
 
         Guidance for LLM:
             - Always request all arguments (`title`, `start_time`, `end_time`,
-            and `attendees`) one by one.
+            ) one by one.
             - If any argument is missing, politely ask the user for it.
             Example:
                 "Could you please tell me the meeting title?"
                 "What time should the meeting start and end?"
+            - do not ask for the attendees email instead take user's email  if available  
             - If the user request is ambiguous (e.g., "set up a meeting tomorrow"
             without a time), clarify before calling the tool.
             - Confirm all details before scheduling.
@@ -192,8 +192,7 @@ class AppointmentSchedulingAssistant(Agent):
             start_time (str): ISO 8601 formatted start datetime
                 (e.g., "2025-09-03T10:00:00").
             end_time (str): ISO 8601 formatted end datetime.
-            attendees (List[str]): List of attendee email addresses.
-                (Strictly avoid spaces in the input emails.)
+            
             timezone (str, optional): Time zone for the meeting.
                 Defaults to "Asia/Kolkata".
 
@@ -205,6 +204,11 @@ class AppointmentSchedulingAssistant(Agent):
             ValueError: If required arguments are missing or invalid.
             RuntimeError: If the meeting creation or database save fails.
         """
+        if context.userdata.user_email:
+            attendees=[context.userdata.user_email]
+        else:
+            attendees=[]
+
         if not all([title, start_time, end_time, attendees]):
             raise ValueError(
                 "Missing one or more required arguments: "
@@ -634,7 +638,7 @@ async def entrypoint(ctx: JobContext):
             instructions = (
                 f"You are assisting {user_data.user_name}, "
                 f"a {user_data.user_age}-year-old {user_data.user_gender}. "
-                f"Their email is {user_data.user_email}. "
+                f"Their email is {user_data.user_email}. Use this mail only as attendees mail while scheduling mail, "
             )
 
             if user_data.last_conversation_for_reference:

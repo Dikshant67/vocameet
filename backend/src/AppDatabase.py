@@ -642,7 +642,7 @@ class AppDatabase:
             Returns:
                 Optional[str]: Combined transcription text, or None if no records exist.
             """
-            query = "SELECT transcription FROM conversations WHERE user_id = ?"
+            query = "SELECT transcription FROM conversations WHERE user_id = ? ORDER BY last_updated DESC LIMIT 2"
     
             try:
                 with self._connect() as conn:
