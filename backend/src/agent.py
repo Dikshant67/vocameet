@@ -804,4 +804,4 @@ async def entrypoint(ctx: JobContext):
     if not ctx.room.remote_participants:
         logger.info("No existing participants found - waiting for new connections")
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm ,drain_timeout=60,initialize_process_timeout=60))
