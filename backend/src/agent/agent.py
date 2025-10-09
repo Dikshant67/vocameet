@@ -6,7 +6,7 @@ import re
 import asyncio
 
 from typing import AsyncIterable, List, Optional
-from AppDatabase import AppDatabase
+from db.AppDatabase import AppDatabase
 from livekit.plugins import azure
 from livekit import rtc
 from dotenv import load_dotenv
@@ -32,13 +32,13 @@ import datetime
 from livekit.agents.llm import function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from calendar_service import CalendarService
+from services.calendar_service import CalendarService
 
 calendar_service = CalendarService()
 # -------------------------------
 # CONFIG & LOGGING
 # -------------------------------
-logging.basicConfig(filename="assistant.log",level=logging.INFO, format="%(levelname)s: %(asctime)s - %(message)s")
+logging.basicConfig(filename="../../logs/assistant.log",level=logging.INFO, format="%(levelname)s: %(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 load_dotenv()

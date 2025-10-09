@@ -63,56 +63,73 @@ class AppDatabase:
                     specialty TEXT,
                     status TEXT DEFAULT 'ACTIVE',
                     phone TEXT,
-                    email TEXT,
+                    email TEXT UNIQUE,
                     calendar_link TEXT,
                     other_languages TEXT,
                     city TEXT,
                     zip TEXT,
                     country TEXT,
                     time_zone TEXT,
-                    last_login_on TIMESTAMP,
+                    meeting_buffer_minutes INTEGER DEFAULT 5,
+                    default_meeting_duration INTEGER DEFAULT 30,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP
                 )
                 ''')
 
-                # Appointments
-                cursor.execute('''
-                CREATE TABLE IF NOT EXISTS appointments (
-                    event_id TEXT PRIMARY KEY ,
-                    user_id INTEGER,
-                    expert_id INTEGER,
-                    start_time TIMESTAMP NOT NULL,
-                    end_time TIMESTAMP NOT NULL,
-                    status TEXT DEFAULT 'Scheduled',
-                    purpose TEXT,
-                    notes TEXT,
-                    type TEXT,
-                    location TEXT,
-                    next_followup_date TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP,
-                    FOREIGN KEY(user_id) REFERENCES users(id),
-                    FOREIGN KEY(expert_id) REFERENCES experts(id)
-                )
-                ''')
+            # ---------------- APPOINTMENTS ----------------
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS appointments (
+                event_id TEXT PRIMARY KEY,
+                user_id INTEGER,
+                expert_id INTEGER,
+                start_time TIMESTAMP NOT NULL,
+                end_time TIMESTAMP NOT NULL,
+                status TEXT DEFAULT 'Scheduled' CHECK (status IN ('Scheduled','Completed','Cancelled','No-Show')),
+                purpose TEXT,
+                notes TEXT,
+                type TEXT,
+                location TEXT,
+                next_followup_date TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(expert_id) REFERENCES experts(id)
+            )
+            ''')
 
-                # Expert Unavailability
-                cursor.execute('''
-                CREATE TABLE IF NOT EXISTS expert_unavailability (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    expert_id INTEGER,
-                    start_time TIMESTAMP NOT NULL,
-                    end_time TIMESTAMP NOT NULL,
-                    reason TEXT,
-                    recurring INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY(expert_id) REFERENCES experts(id)
-                )
-                ''')
+                # ---------------- EXPERT AVAILABILITY ----------------
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS expert_availability (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                expert_id INTEGER NOT NULL,
+                start_time TIMESTAMP NOT NULL,
+                end_time TIMESTAMP NOT NULL,
+                day_of_week INTEGER, -- 0=Mon, 6=Sun (for recurring weekly)
+                recurring_type TEXT CHECK (recurring_type IN ('none','daily','weekly','monthly')) DEFAULT 'none',
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP,
+                FOREIGN KEY(expert_id) REFERENCES experts(id)
+            )
+            ''')
+
+            # ---------------- EXPERT UNAVAILABILITY ----------------
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS expert_unavailability (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                expert_id INTEGER NOT NULL,
+                start_time TIMESTAMP NOT NULL,
+                end_time TIMESTAMP NOT NULL,
+                reason TEXT,
+                recurring_type TEXT CHECK (recurring_type IN ('none','daily','weekly','monthly')) DEFAULT 'none',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(expert_id) REFERENCES experts(id)
+            )
+            ''')
 
                 # Conversations
-                cursor.execute('''
+            cursor.execute('''
                         CREATE TABLE IF NOT EXISTS conversations (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             user_id INTEGER,
@@ -127,7 +144,7 @@ class AppDatabase:
                 ''')
 
                 # Feedback
-                cursor.execute('''
+            cursor.execute('''
                 CREATE TABLE IF NOT EXISTS feedback (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
@@ -140,7 +157,7 @@ class AppDatabase:
                 )
                 ''')
                         # Tokens
-                cursor.execute('''
+            cursor.execute('''
                 CREATE TABLE IF NOT EXISTS tokens (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
@@ -154,9 +171,9 @@ class AppDatabase:
                 )
                 ''')
 
-                conn.commit()
+            conn.commit()
               
-                logger.info(f"Database initialized at {self.db_path}")
+            logger.info(f"Database initialized at {self.db_path}")
         except :
             logger.critical(f"FATAL: Database initialization failed: ", exc_info=True)
 

@@ -16,7 +16,7 @@ logger = logging.getLogger("agent")
 class CalendarService:
     """A service for interacting with Google Calendar."""
 
-    def __init__(self, credentials_path: str = "../config/credentials.json", token_path: str = "token.json"):
+    def __init__(self, credentials_path: str = "../../config/credentials.json", token_path: str = "token.json"):
         """
         Initializes the Google Calendar client with proper authentication.
 

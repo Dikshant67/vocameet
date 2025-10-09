@@ -11,3 +11,7 @@ KMS
 .pytest_cache
 .ruff_cache
 ./ai*
+client_secret.json
+*.db
+
+token.json
