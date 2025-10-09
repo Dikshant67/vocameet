@@ -1,3 +1,4 @@
+# agent.py
 from dataclasses import dataclass
 import logging
 import os
@@ -34,7 +35,11 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from calendar_service import CalendarService
 
 calendar_service = CalendarService()
-logger = logging.getLogger("agent")
+# -------------------------------
+# CONFIG & LOGGING
+# -------------------------------
+logging.basicConfig(filename="assistant.log",level=logging.INFO, format="%(levelname)s: %(asctime)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 db=AppDatabase()
@@ -97,7 +102,7 @@ class AppointmentSchedulingAssistant(Agent):
             You warmly greet users, offer a friendly welcome, and are ready to assist with scheduling. 
             You ask details to the user one at a time
             Your responses are clear, concise, and to the point, without complex formatting or punctuation or emojis . You are curious, friendly, 
-            and have a sense of humor. Your goal is to provide a smooth and efficient user experience for all meeting scheduling needs""",
+            and have a sense of humor. Your goal is to provide a smooth and efficient user experience for all meeting scheduling needs"""
         super().__init__(instructions=self.base_instructions)
 
     # all functions annotated with @function_tool will be passed to the LLM when this
@@ -638,7 +643,7 @@ async def entrypoint(ctx: JobContext):
             instructions = (
                 f"You are assisting {user_data.user_name}, "
                 f"a {user_data.user_age}-year-old {user_data.user_gender}. "
-                f"Their email is {user_data.user_email}. Use this mail only as attendees mail while scheduling mail, "
+                f"users email is {user_data.user_email}. Use this mail only as attendees mail while scheduling meetings. "
             )
 
             if user_data.last_conversation_for_reference:

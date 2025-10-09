@@ -15,7 +15,7 @@ from agent import run_agent_with_user
 # -------------------------------
 # CONFIG & LOGGING
 # -------------------------------
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(asctime)s - %(message)s")
+logging.basicConfig(filename="assistant.log",level=logging.INFO, format="%(levelname)s: %(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 NEXTAUTH_SECRET = os.environ.get("NEXTAUTH_SECRET")
