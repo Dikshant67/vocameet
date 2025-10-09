@@ -10,15 +10,17 @@ from pydantic import BaseModel
 from jose import jwt, JWTError
 from services.calendar_service import CalendarService
 from db.AppDatabase import AppDatabase  # Your SQLite helper
-
+import dotenv 
+from dotenv import load_dotenv
 
 # -------------------------------
 # CONFIG & LOGGING
 # -------------------------------
 logging.basicConfig(filename="../logs/assistant.log",level=logging.INFO, format="%(levelname)s: %(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
-
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 NEXTAUTH_SECRET = os.environ.get("NEXTAUTH_SECRET")
+logger.info("NEXTAUTH_SECRET:",os.environ.get("NEXTAUTH_SECRET"))
 
 NEXTAUTH_ALGO = "HS256"  # NextAuth uses HS256 by default
 

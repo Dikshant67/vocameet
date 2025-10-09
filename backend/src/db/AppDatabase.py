@@ -1,8 +1,10 @@
-from datetime import datetime
+from datetime import datetime, time, timedelta
 import sqlite3
 import os
 import logging
 from typing import Optional, Dict, Any, List
+
+import pytz
 
 logger = logging.getLogger("app-db")
 logger.setLevel(logging.INFO)
@@ -513,7 +515,37 @@ class AppDatabase:
     
             except Exception as e:
                 logger.exception(f"Unexpected error while retrieving expert (id={expert_id}): {e}")
-                return None   
+                return None
+    def get_all_experts(self) -> Optional[List[Dict[str, Any]]]:
+        """Retrieve details of all experts in the database.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: A list of expert dictionaries, or None if no experts are found or an error occurs.
+        """
+        query = "SELECT * FROM experts"
+
+        try:
+            with self._connect() as conn:
+                # Optional: set row factory to return dict-like rows
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(query)
+                rows = cursor.fetchall()
+
+                if rows:
+                    logger.info(f"{len(rows)} experts retrieved successfully.")
+                    return [dict(row) for row in rows]
+                else:
+                    logger.warning("No experts found in the database.")
+                    return None
+
+        except sqlite3.Error as e:
+            logger.exception(f"Database error while retrieving all experts: {e}")
+            return None
+
+        except Exception as e:
+            logger.exception(f"Unexpected error while retrieving all experts: {e}")
+            return None   
     # ---------------- APPOINTMENTS ----------------
     def create_appointment(
             self,
@@ -604,7 +636,133 @@ class AppDatabase:
             return False
         finally:
             conn.close()
-    
+    def has_conflict(self, expert_id: int, start_time: datetime, end_time: datetime) -> bool:
+        """Check if any appointment or unavailability overlaps with the given interval."""
+        # This function is logically correct. For efficiency, you could combine the two
+        # queries with a UNION ALL, but it's not a bug.
+        with self._connect() as conn:
+            cursor = conn.cursor()
+
+            # Conflict with existing appointments (not cancelled)
+            cursor.execute('''
+                SELECT 1 FROM appointments
+                WHERE expert_id = ?
+                AND status != 'Cancelled'
+                AND start_time < ? AND end_time > ?
+                LIMIT 1
+            ''', (expert_id, end_time, start_time))
+            if cursor.fetchone():
+                return True
+
+            # Conflict with unavailability
+            cursor.execute('''
+                SELECT 1 FROM expert_unavailability
+                WHERE expert_id = ?
+                AND start_time < ? AND end_time > ?
+                LIMIT 1
+            ''', (expert_id, end_time, start_time))
+            if cursor.fetchone():
+                return True
+
+            return False
+
+    def get_expert_availability(self, expert_id: int) -> list[tuple]:
+        """Fetch all availability slots for a given expert."""
+        # This function is correct. No changes needed.
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT start_time, end_time, recurring_type, day_of_week, is_active
+                FROM expert_availability
+                WHERE expert_id = ?
+            ''', (expert_id,))
+            rows = cursor.fetchall()
+            availability = [(row[0], row[1], row[2], row[3], bool(row[4])) for row in rows]
+            return availability
+
+    def is_within_availability(self, expert_id: int, start_dt: datetime, end_dt: datetime) -> bool:
+        """
+        Check if a given UTC datetime slot is within an expert's defined availability.
+        """
+        availability = self.get_expert_availability(expert_id)
+        if not availability:
+            return False
+        try:
+            expert_tz = pytz.timezone("Asia/Kolkata")
+        except pytz.UnknownTimeZoneError:
+        # Fallback to UTC if timezone is invalid, though it shouldn't be.
+            logger.error("Invalid Timezone")
+            expert_tz = pytz.UTC
+
+    # Convert the incoming UTC meeting time to the expert's local time.
+        start_local = start_dt.astimezone(expert_tz)
+        end_local = end_dt.astimezone(expert_tz)
+
+        # The input start_dt is aware (UTC), so its weekday is correct
+        weekday = start_local.weekday()  # Monday=0 ... Sunday=6
+
+        for avail_start_str, avail_end_str, recurring_type, day_of_week, is_active in availability:
+            if not is_active:
+                continue
+            
+            try:
+                # FIX 1: Handle naive times and make them timezone-aware in UTC before comparing
+                utc_tz = pytz.UTC
+
+                # Handle time-only formats ("10:00:00")
+                if len(avail_start_str) <= 8:
+                    avail_start_time = time.fromisoformat(avail_start_str)
+                    avail_end_time = time.fromisoformat(avail_end_str)
+
+                    # Combine with the date of the meeting request and make it UTC
+                    avail_start = utc_tz.localize(datetime.combine(start_dt.date(), avail_start_time))
+                    avail_end = utc_tz.localize(datetime.combine(start_dt.date(), avail_end_time))
+                else:
+                    # Handle full naive datetime strings from DB
+                    avail_start = utc_tz.localize(datetime.fromisoformat(avail_start_str))
+                    avail_end = utc_tz.localize(datetime.fromisoformat(avail_end_str))
+                
+                # Recurrence handling
+                if recurring_type == "daily":
+                    # For daily, compare only the time component after converting to the same date
+                    if avail_start.time() <= start_dt.time() and end_local.time() <= avail_end.time():
+                        return True
+
+                elif recurring_type == "weekly":
+                    if weekday == int(day_of_week):
+                        if avail_start.time() <= start_dt.time() and end_local.time() <= avail_end.time():
+                            return True
+                else: 
+                    # Non-recurring (specific date). Now comparison is aware vs aware.
+                    if avail_start <= start_dt and end_local <= avail_end:
+                        return True
+
+            except Exception as e:
+                print(f"Error parsing availability: {e}") # Consider using logger
+                continue
+
+        return False
+
+    def suggest_next_available_slots(self, expert_id: int, desired_start: datetime, duration_minutes: int = 30, limit: int = 3):
+        """Suggest the next available time slots for an expert starting from a UTC desired_start."""
+        slots = []
+        current = desired_start
+        
+        # Add a safety break to prevent infinite loops
+        max_attempts = 100 
+        attempts = 0
+
+        while len(slots) < limit and attempts < max_attempts:
+            current_end = current + timedelta(minutes=duration_minutes)
+            # These functions now correctly handle aware datetimes
+            if self.is_within_availability(expert_id, current, current_end) and not self.has_conflict(expert_id, current, current_end):
+                slots.append((current, current_end))
+            
+            current += timedelta(minutes=30) # Check next 30-min slot
+            attempts += 1
+            
+        return slots
+
     #-----------------CONVERSATIONS-----------------
     
 

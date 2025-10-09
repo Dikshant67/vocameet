@@ -6,3 +6,4 @@ backend/livekit_info.md
 backend/src/app_data.db
 backend/src/vocameet.db
 
+backend/logs/assistant.log
