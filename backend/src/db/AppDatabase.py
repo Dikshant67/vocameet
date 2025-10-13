@@ -683,86 +683,109 @@ class AppDatabase:
     def is_within_availability(self, expert_id: int, start_dt: datetime, end_dt: datetime) -> bool:
         """
         Check if a given UTC datetime slot is within an expert's defined availability.
+        - start_dt, end_dt: aware UTC datetimes
+        - DB stores all times in UTC
         """
+        import pytz
+        from datetime import datetime, time
+
         availability = self.get_expert_availability(expert_id)
         if not availability:
             return False
+
         try:
             expert_tz = pytz.timezone("Asia/Kolkata")
         except pytz.UnknownTimeZoneError:
-        # Fallback to UTC if timezone is invalid, though it shouldn't be.
-            logger.error("Invalid Timezone")
             expert_tz = pytz.UTC
 
-    # Convert the incoming UTC meeting time to the expert's local time.
+        # Convert meeting time to expert local time
         start_local = start_dt.astimezone(expert_tz)
         end_local = end_dt.astimezone(expert_tz)
-
-        # The input start_dt is aware (UTC), so its weekday is correct
         weekday = start_local.weekday()  # Monday=0 ... Sunday=6
+        utc_tz = pytz.UTC
 
         for avail_start_str, avail_end_str, recurring_type, day_of_week, is_active in availability:
             if not is_active:
                 continue
-            
-            try:
-                # FIX 1: Handle naive times and make them timezone-aware in UTC before comparing
-                utc_tz = pytz.UTC
 
-                # Handle time-only formats ("10:00:00")
+            try:
+                # --- Handle time-only formats (daily/weekly recurrence) ---
                 if len(avail_start_str) <= 8:
                     avail_start_time = time.fromisoformat(avail_start_str)
                     avail_end_time = time.fromisoformat(avail_end_str)
 
-                    # Combine with the date of the meeting request and make it UTC
-                    avail_start = utc_tz.localize(datetime.combine(start_dt.date(), avail_start_time))
-                    avail_end = utc_tz.localize(datetime.combine(start_dt.date(), avail_end_time))
+                    # Combine with expert local date of meeting
+                    avail_start_local = datetime.combine(start_local.date(), avail_start_time)
+                    avail_end_local = datetime.combine(start_local.date(), avail_end_time)
+                    avail_start_local = expert_tz.localize(avail_start_local)
+                    avail_end_local = expert_tz.localize(avail_end_local)
+
                 else:
-                    # Handle full naive datetime strings from DB
-                    avail_start = utc_tz.localize(datetime.fromisoformat(avail_start_str))
-                    avail_end = utc_tz.localize(datetime.fromisoformat(avail_end_str))
-                
-                # Recurrence handling
+                    # --- Full datetime from DB ---
+                    avail_start_obj = datetime.fromisoformat(avail_start_str)
+                    avail_end_obj = datetime.fromisoformat(avail_end_str)
+
+                    # Convert DB UTC times to expert local
+                    if avail_start_obj.tzinfo is None:
+                        avail_start_local = utc_tz.localize(avail_start_obj).astimezone(expert_tz)
+                    else:
+                        avail_start_local = avail_start_obj.astimezone(expert_tz)
+
+                    if avail_end_obj.tzinfo is None:
+                        avail_end_local = utc_tz.localize(avail_end_obj).astimezone(expert_tz)
+                    else:
+                        avail_end_local = avail_end_obj.astimezone(expert_tz)
+
+                # --- Recurrence handling ---
                 if recurring_type == "daily":
-                    # For daily, compare only the time component after converting to the same date
-                    if avail_start.time() <= start_dt.time() and end_local.time() <= avail_end.time():
+                    if avail_start_local.time() <= start_local.time() and end_local.time() <= avail_end_local.time():
                         return True
 
                 elif recurring_type == "weekly":
                     if weekday == int(day_of_week):
-                        if avail_start.time() <= start_dt.time() and end_local.time() <= avail_end.time():
+                        if avail_start_local.time() <= start_local.time() and end_local.time() <= avail_end_local.time():
                             return True
-                else: 
-                    # Non-recurring (specific date). Now comparison is aware vs aware.
-                    if avail_start <= start_dt and end_local <= avail_end:
+
+                else:  # Non-recurring exact datetime
+                    # Compare in UTC
+                    avail_start_utc = avail_start_local.astimezone(utc_tz)
+                    avail_end_utc = avail_end_local.astimezone(utc_tz)
+                    if avail_start_utc <= start_dt and end_dt <= avail_end_utc:
                         return True
 
             except Exception as e:
-                print(f"Error parsing availability: {e}") # Consider using logger
+                print(f"Error parsing availability: {e}")
                 continue
 
         return False
-
-    def suggest_next_available_slots(self, expert_id: int, desired_start: datetime, duration_minutes: int = 30, limit: int = 3):
-        """Suggest the next available time slots for an expert starting from a UTC desired_start."""
+    def suggest_next_available_slots(self, expert_id: int, desired_start: datetime, duration_minutes: int = None, limit: int = 3):
+        """Suggest the next available UTC time slots for an expert starting from desired_start (UTC)."""
         slots = []
         current = desired_start
-        
-        # Add a safety break to prevent infinite loops
-        max_attempts = 100 
+
+        # Fetch expert info once
+        expert = self.get_expert(expert_id)
+        if duration_minutes is None:
+            duration_minutes = expert.get("default_meeting_duration", 30)
+
+        # Safety break
+        max_attempts = limit * 20  # safer than hardcoding 100
         attempts = 0
 
         while len(slots) < limit and attempts < max_attempts:
             current_end = current + timedelta(minutes=duration_minutes)
-            # These functions now correctly handle aware datetimes
+
             if self.is_within_availability(expert_id, current, current_end) and not self.has_conflict(expert_id, current, current_end):
                 slots.append((current, current_end))
-            
-            current += timedelta(minutes=30) # Check next 30-min slot
-            attempts += 1
-            
-        return slots
 
+            # Move by either expert buffer or half of duration for better suggestions
+            buffer_minutes = expert.get("meeting_buffer_minutes", 0)
+            step = max(30, buffer_minutes)  # at least 30 mins step
+            current += timedelta(minutes=step)
+
+            attempts += 1
+
+        return slots
     #-----------------CONVERSATIONS-----------------
     
 

@@ -21,8 +21,8 @@ def seed_data():
 
     # ---------- EXPERTS ----------
     experts = [
-        ("Dr. Rohan Patel", "Male", "1985-03-10", "Career Coach", "ACTIVE", "9876543210", "rohan@example.com", "https://cal.rohanpatel.com", "en,hi", "Mumbai", "400002", "India", "Asia/Kolkata", 10, 30),
-        ("Dr. Sneha Iyer", "Female", "1990-11-25", "Mental Health Counselor", "ACTIVE", "9876500011", "sneha@example.com", "https://cal.sneha.com", "en", "Bangalore", "560001", "India", "Asia/Kolkata", 5, 45),
+        ("Dr. Kundan Gaykwad", "Male", "1985-03-10", "Surgeon", "ACTIVE", "9876543210", "kundan@example.com", "https://cal.kundandhayale.com", "en,hi", "Mumbai", "400002", "India", "Asia/Kolkata", 10, 30),
+        ("Dr. Rushikesh Lawande", "Male", "1990-11-25", "Dental Care Expert", "ACTIVE", "9876500011", "rushi@example.com", "https://cal.rushi.com", "en", "Bangalore", "560001", "India", "Asia/Kolkata", 5, 45),
     ]
     for e in experts:
         cursor.execute("""
@@ -32,8 +32,8 @@ def seed_data():
 
     # ---------- AVAILABILITY ----------
     # Example: Rohan is available Mon-Fri 10 AM - 5 PM, recurring weekly
-    rohan_id = cursor.execute("SELECT id FROM experts WHERE email='rohan@example.com'").fetchone()[0]
-    sneha_id = cursor.execute("SELECT id FROM experts WHERE email='sneha@example.com'").fetchone()[0]
+    rohan_id = cursor.execute("SELECT id FROM experts WHERE email='kundan@example.com'").fetchone()[0]
+    sneha_id = cursor.execute("SELECT id FROM experts WHERE email='rushi@example.com'").fetchone()[0]
 
     for day in range(0, 5):  # Monday to Friday
         cursor.execute("""
@@ -70,14 +70,14 @@ def seed_data():
     """, (sneha_id, "00:00:00", "23:59:59", "Weekly off", "weekly"))
 
     # ---------- SAMPLE APPOINTMENTS ----------
-    start = datetime.now() + timedelta(days=1, hours=11)
-    end = start + timedelta(minutes=30)
-    cursor.execute("""
-    INSERT OR IGNORE INTO appointments (event_id, user_id, expert_id, start_time, end_time, status, purpose, type, location)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        "EVT001", 1, rohan_id, start, end, "Scheduled", "Career guidance session", "Online", "Google Meet"
-    ))
+    #start = datetime.now() + timedelta(days=1, hours=11)
+    #end = start + timedelta(minutes=30)
+   # cursor.execute("""
+  #  INSERT OR IGNORE INTO appointments (event_id, user_id, expert_id, start_time, end_time, status, purpose, type, location)
+    #VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+   # """, (
+   #     "EVT001", 1, rohan_id, start, end, "Scheduled", "Career guidance session", "Online", "Google Meet"
+  #  ))
 
     # ---------- COMMIT ----------
     conn.commit()

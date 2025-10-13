@@ -7,3 +7,8 @@ backend/src/app_data.db
 backend/src/vocameet.db
 
 backend/logs/assistant.log
+backend/src/db/add_data_in_db.py
+backend/src/db/add_dummy_data.py
+backend/src/db/add_data_in_db.py
+backend/src/db/add_data_in_db.py
+backend/src/db/seed_data.py

@@ -282,6 +282,7 @@ class AppointmentSchedulingAssistant(Agent):
                 start_time=start_utc.isoformat(),
                 end_time=end_utc.isoformat(),
             )
+            
 
             confirmation_message = (
                 f"Meeting '{title}' successfully created with {expert['name']}.\n"
@@ -293,7 +294,67 @@ class AppointmentSchedulingAssistant(Agent):
         except Exception as exc:
             # logger.exception("Failed to schedule meeting: %s", exc) 
             raise RuntimeError("An unexpected error occurred while scheduling the meeting.") from exc
+    @function_tool
+    async def suggest_slots_for_expert(
+        self,
+        context: "RunContext_T",
+        expert_id: int,
+        desired_start: str,
+        timezone: str = "Asia/Kolkata",
+        duration_minutes: int = 30,
+        limit: int = 3
+    ) -> str:
+        import pytz
+        import datetime
 
+        # --- Step 1: Validate input ---
+        if not expert_id or not desired_start:
+            raise ValueError("Missing required arguments: expert_id or desired_start.")
+
+        tz = pytz.timezone(timezone)
+
+        try:
+            # --- Step 2: Parse desired_start string into aware datetime ---
+            dt_desired = datetime.datetime.fromisoformat(desired_start)
+            if dt_desired.tzinfo is None:
+                desired_dt = tz.localize(dt_desired)
+            else:
+                desired_dt = dt_desired.astimezone(tz)
+        except Exception as e:
+            raise ValueError(f"Invalid datetime format for desired_start: {e}")
+
+        # --- Step 3: Convert to UTC for internal use ---
+        desired_start_utc = desired_dt.astimezone(pytz.UTC)
+
+        # --- Step 4: Check if expert exists ---
+        expert = db.get_expert(expert_id)
+        if not expert:
+            return f"No expert found with id {expert_id}."
+
+        # --- Step 5: Fetch next available slots from DB ---
+        suggested_slots_utc = db.suggest_next_available_slots(
+            expert_id,
+            desired_start_utc,
+            duration_minutes=duration_minutes,
+            limit=limit
+        )
+
+        # --- Step 6: Handle case when no slots are found ---
+        if not suggested_slots_utc:
+            return f"No available slots found for expert {expert['name']} after {desired_dt.strftime('%I:%M %p on %b %d')}."
+
+        # --- Step 7: Format output slots in expert's timezone ---
+        formatted_slots = []
+        for start_utc, end_utc in suggested_slots_utc:
+            start_local = start_utc.astimezone(tz)
+            end_local = end_utc.astimezone(tz)
+            formatted_slots.append(
+                f"{start_local.strftime('%A, %b %d from %I:%M %p')} to {end_local.strftime('%I:%M %p %Z')}"
+            )
+
+        # --- Step 8: Construct final message ---
+        formatted_text = "\n".join(f"- {slot}" for slot in formatted_slots)
+        return f"Here are the next available time slots for expert {expert['name']}:\n{formatted_text}"
     @function_tool
     async def list_meetings_by_date(
         self,
