@@ -72,17 +72,17 @@ export default async function RootLayout({ children }: RootLayoutProps) {
       <body
         className={`${publicSans.variable} ${commitMono.variable} overflow-x-hidden antialiased`}
       >
-        <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID}>
-
-        <UserProvider>
-      <NavBar/>
-        {children}
         
-        </UserProvider>
-        </GoogleOAuthProvider>
-        <div className="group fixed bottom-0 left-1/2 z-50 mb-2 -translate-x-1/2">
+                <Providers>
+                  <NavBar/>
+                  {children}
+                 <div className="group fixed bottom-0 left-1/2 z-50 mb-2 -translate-x-1/2">
           <ThemeToggle className="translate-y-20 transition-transform delay-150 duration-300 group-hover:translate-y-0" />
         </div>
+                </Providers>
+
+               
+       
 
       </body>
     </html>

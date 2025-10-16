@@ -1,3 +1,4 @@
+# agent.py
 from dataclasses import dataclass
 import logging
 import os
@@ -5,7 +6,7 @@ import re
 import asyncio
 
 from typing import AsyncIterable, List, Optional
-from AppDatabase import AppDatabase
+from db.AppDatabase import AppDatabase
 from livekit.plugins import azure
 from livekit import rtc
 from dotenv import load_dotenv
@@ -31,10 +32,15 @@ import datetime
 from livekit.agents.llm import function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from calendar_service import CalendarService
+import pytz
+from services.calendar_service import CalendarService
 
 calendar_service = CalendarService()
-logger = logging.getLogger("agent")
+# -------------------------------
+# CONFIG & LOGGING
+# -------------------------------
+logging.basicConfig(filename="../../logs/assistant.log",level=logging.INFO, format="%(levelname)s: %(asctime)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 db=AppDatabase()
@@ -83,15 +89,19 @@ class AppointmentSchedulingAssistant(Agent):
        
         self.base_instructions=f"""You are a friendly and helpful voice AI assistant designed for managing meetings . 
             The current date and time is {current_date_str}.
-            When you first connect,Greet user with a friendly greeting and offer a friendly welcome.for example if users name is Arun Kumar,Hi Arun Kumar
+            When you first connect,Greet user with a friendly greeting and offer a friendly welcome.for example if users name is Arun Kumar,Hi Arun 
             **CRITICAL INSTRUCTION: Your responses MUST be in plain text only. NEVER use any special formatting, including asterisks, bolding, italics, or bullet points.**
             Do not accept the dates and time in the past suggest them to use in future dates and times.
             Do not read ,refer asterisk symbol in any context.
             You always ask questions one at a time.
             You warmly greet users, offer a friendly welcome, and are ready to assist with scheduling. 
             You ask details to the user one at a time
-            Your responses are clear, concise, and to the point, without complex formatting or punctuation or emojisvb . You are curious, friendly, 
-            and have a sense of humor. Your goal is to provide a smooth and efficient user experience for all meeting scheduling needs""",
+            When a user requests a meeting, fetch relevant experts from the database based on the user's requirements. Compare the expert's speciality with the user's needs.
+            Check the expert's availability and detect any scheduling conflicts. If conflicts exist, suggest alternative available time slots.
+            Once a suitable slot is found, schedule the meeting with the expert.
+            Your responses should be clear, concise, and to the point, without complex formatting. You are curious, friendly, and have a sense of humor. Your goal is to provide a smooth and efficient user experience for scheduling meetings with experts.
+            Your responses are clear, concise, and to the point, without complex formatting or punctuation or emojis . You are curious, friendly, 
+            and have a sense of humor. Your goal is to provide a smooth and efficient user experience for all meeting scheduling needs"""
         super().__init__(instructions=self.base_instructions)
 
     # all functions annotated with @function_tool will be passed to the LLM when this
@@ -136,6 +146,31 @@ class AppointmentSchedulingAssistant(Agent):
 
         return "sunny with a temperature of 70 degrees."
     @function_tool
+    async def fetch_experts(self, context: RunContext_T, user_requirement: str):
+        """Use this tool to fetch experts from the database based on the user's requirements.
+
+        The tool compares the user's requirement with the speciality of experts and returns a list of matching experts along with their availability. 
+        If no experts match the requirement, the tool should indicate that no suitable expert is available.
+
+        Args:
+            user_requirement: The specific need or topic the user wants expert assistance for (e.g. data engineering, SAP testing)
+        """
+
+        logger.info(f"Fetching experts for user requirement: {user_requirement}")
+        experts_db=db.get_all_experts()
+        
+        # Pseudo code to simulate database lookup
+        # In real implementation, replace with actual DB query
+   
+        # matching_experts = [expert for expert in experts_db if user_requirement.lower() in expert["speciality"].lower()]
+
+        # if not matching_experts:
+        #     return f"No experts available for {user_requirement} at the moment."
+
+        # Return experts id and their availability
+        return experts_db
+    
+    @function_tool
     async def get_the_summary_of_user_info(self,context: RunContext_T)-> str:
         """Used to get the summary of the user Details such as Name, Age, Gender"""
         # safely extract values with defaults
@@ -153,63 +188,79 @@ class AppointmentSchedulingAssistant(Agent):
     async def save_meeting_in_db(self,event_id :str ,user_id:int,expert_id:int,title:str,start_time:str,end_time:str,attendees:list[str]):
         db.create_appointment(event_id,user_id,expert_id,title,start_time,end_time)
         return "meeting saved successfully"
-        
-        
-        
+   
     @function_tool
     async def schedule_meeting(
         self,
         context: "RunContext_T",
         title: str,
+        expert_id: int,
         start_time: str,
         end_time: str,
-        attendees: List[str],
         timezone: str = "Asia/Kolkata"
     ) -> str:
-        """
-        Schedule a meeting in Google Calendar.
+        import pytz
+        import datetime
 
-        Guidance for LLM:
-            - Always request all arguments (`title`, `start_time`, `end_time`,
-            and `attendees`) one by one.
-            - If any argument is missing, politely ask the user for it.
-            Example:
-                "Could you please tell me the meeting title?"
-                "What time should the meeting start and end?"
-            - If the user request is ambiguous (e.g., "set up a meeting tomorrow"
-            without a time), clarify before calling the tool.
-            - Confirm all details before scheduling.
+        if context.userdata.user_email:
+            attendees = [context.userdata.user_email]
+        else:
+            attendees = []
 
-        Args:
-            context (RunContext_T): The current run context (not user-supplied).
-            title (str): The meeting title or subject.
-            start_time (str): ISO 8601 formatted start datetime
-                (e.g., "2025-09-03T10:00:00").
-            end_time (str): ISO 8601 formatted end datetime.
-            attendees (List[str]): List of attendee email addresses.
-                (Strictly avoid spaces in the input emails.)
-            timezone (str, optional): Time zone for the meeting.
-                Defaults to "Asia/Kolkata".
-
-        Returns:
-            str: Confirmation message with meeting title, start time, end time, and
-                date.
-
-        Raises:
-            ValueError: If required arguments are missing or invalid.
-            RuntimeError: If the meeting creation or database save fails.
-        """
         if not all([title, start_time, end_time, attendees]):
-            raise ValueError(
-                "Missing one or more required arguments: "
-                "title, start_time, end_time, attendees."
-            )
+            raise ValueError("Missing one or more required arguments.")
+
+        tz = pytz.timezone(timezone)
+        try:
+            # FIX: Robustly handle both naive and aware datetime strings.
+            
+            # --- Handle Start Time ---
+            dt_start_obj = datetime.datetime.fromisoformat(start_time)
+            if dt_start_obj.tzinfo is None:
+                # It's a naive datetime, so we localize it.
+                start_dt = tz.localize(dt_start_obj)
+            else:
+                # It's already an aware datetime, so we just ensure it's in the correct timezone.
+                start_dt = dt_start_obj.astimezone(tz)
+
+            # --- Handle End Time ---
+            dt_end_obj = datetime.datetime.fromisoformat(end_time)
+            if dt_end_obj.tzinfo is None:
+                end_dt = tz.localize(dt_end_obj)
+            else:
+                end_dt = dt_end_obj.astimezone(tz)
+
+        except Exception as e:
+            # This will catch parsing errors or other issues.
+            raise ValueError(f"Invalid datetime format. Could not parse '{start_time}'. Error: {e}")
+
+        # Convert to UTC for all internal logic and database storage
+        start_utc = start_dt.astimezone(pytz.UTC)
+        end_utc = end_dt.astimezone(pytz.UTC)
+
+        # ... the rest of your function remains the same ...
+        
+        expert = db.get_expert(expert_id)
+        if not expert:
+            return f"No expert found with id {expert_id}."
+
+        if not db.is_within_availability(expert_id, start_utc, end_utc) or db.has_conflict(expert_id, start_utc, end_utc):
+            suggested_slots_utc = db.suggest_next_available_slots(expert_id, start_utc)
+            if suggested_slots_utc:
+                slots_text_parts = []
+                for start, end in suggested_slots_utc:
+                    local_start = start.astimezone(tz)
+                    slots_text_parts.append(f"from {local_start.strftime('%I:%M %p')} to {end.astimezone(tz).strftime('%I:%M %p on %b %d')}")
+                slots_text = ", ".join(slots_text_parts)
+                return f"Expert {expert['name']} is not available at the requested time. Here are some other options: {slots_text}"
+            else:
+                return f"Expert {expert['name']} is not available at the requested time, and no other suitable slots could be found nearby."
 
         try:
             event_id = calendar_service.create_meeting(
                 summary=title,
-                start_time=start_time,
-                end_time=end_time,
+                start_time=start_dt.isoformat(),
+                end_time=end_dt.isoformat(),
                 attendees=attendees,
                 timezone=timezone,
             )
@@ -217,36 +268,87 @@ class AppointmentSchedulingAssistant(Agent):
             if isinstance(event_id, tuple):
                 event_id = event_id[0]
 
-            save_result = await self.save_meeting_in_db(
+            save_result = db.create_appointment(
                 event_id=event_id,
                 user_id=context.userdata.user_id,
-                expert_id=2,
+                expert_id=expert_id,
                 title=title,
-                start_time=start_time,
-                end_time=end_time,
-                attendees=attendees,
+                start_time=start_utc.isoformat(),
+                end_time=end_utc.isoformat(),
             )
+            
 
             confirmation_message = (
-                f"Meeting '{title}' successfully created.\n"
-                f"Start: {start_time}\n"
-                f"End: {end_time}\n"
-                f"Attendees: {', '.join(attendees)}\n"
-                f"Database status: {save_result}"
+                f"Meeting '{title}' successfully created with {expert['name']}.\n"
+                f"Time: {start_dt.strftime('%A, %B %d at %I:%M %p %Z')}\n"
+                f"Attendees: {', '.join(attendees)}"
             )
-
             return confirmation_message
 
-        except ValueError as exc:
-            logger.error("Invalid input while scheduling meeting: %s", exc)
-            raise
-
         except Exception as exc:
-            logger.exception("Failed to schedule meeting: %s", exc)
-            raise RuntimeError(
-                "An unexpected error occurred while scheduling the meeting."
-            ) from exc
+            # logger.exception("Failed to schedule meeting: %s", exc) 
+            raise RuntimeError("An unexpected error occurred while scheduling the meeting.") from exc
+    @function_tool
+    async def suggest_slots_for_expert(
+        self,
+        context: "RunContext_T",
+        expert_id: int,
+        desired_start: str,
+        timezone: str = "Asia/Kolkata",
+        duration_minutes: int = 30,
+        limit: int = 3
+    ) -> str:
+        import pytz
+        import datetime
 
+        # --- Step 1: Validate input ---
+        if not expert_id or not desired_start:
+            raise ValueError("Missing required arguments: expert_id or desired_start.")
+
+        tz = pytz.timezone(timezone)
+
+        try:
+            # --- Step 2: Parse desired_start string into aware datetime ---
+            dt_desired = datetime.datetime.fromisoformat(desired_start)
+            if dt_desired.tzinfo is None:
+                desired_dt = tz.localize(dt_desired)
+            else:
+                desired_dt = dt_desired.astimezone(tz)
+        except Exception as e:
+            raise ValueError(f"Invalid datetime format for desired_start: {e}")
+
+        # --- Step 3: Convert to UTC for internal use ---
+        desired_start_utc = desired_dt.astimezone(pytz.UTC)
+
+        # --- Step 4: Check if expert exists ---
+        expert = db.get_expert(expert_id)
+        if not expert:
+            return f"No expert found with id {expert_id}."
+
+        # --- Step 5: Fetch next available slots from DB ---
+        suggested_slots_utc = db.suggest_next_available_slots(
+            expert_id,
+            desired_start_utc,
+            duration_minutes=duration_minutes,
+            limit=limit
+        )
+
+        # --- Step 6: Handle case when no slots are found ---
+        if not suggested_slots_utc:
+            return f"No available slots found for expert {expert['name']} after {desired_dt.strftime('%I:%M %p on %b %d')}."
+
+        # --- Step 7: Format output slots in expert's timezone ---
+        formatted_slots = []
+        for start_utc, end_utc in suggested_slots_utc:
+            start_local = start_utc.astimezone(tz)
+            end_local = end_utc.astimezone(tz)
+            formatted_slots.append(
+                f"{start_local.strftime('%A, %b %d from %I:%M %p')} to {end_local.strftime('%I:%M %p %Z')}"
+            )
+
+        # --- Step 8: Construct final message ---
+        formatted_text = "\n".join(f"- {slot}" for slot in formatted_slots)
+        return f"Here are the next available time slots for expert {expert['name']}:\n{formatted_text}"
     @function_tool
     async def list_meetings_by_date(
         self,
@@ -628,7 +730,7 @@ async def entrypoint(ctx: JobContext):
             instructions = (
                 f"You are assisting {user_data.user_name}, "
                 f"a {user_data.user_age}-year-old {user_data.user_gender}. "
-                f"Their email is {user_data.user_email}. "
+                f"users email is {user_data.user_email}. Use this mail only as attendees mail while scheduling meetings. "
             )
 
             if user_data.last_conversation_for_reference:
@@ -798,4 +900,4 @@ async def entrypoint(ctx: JobContext):
     if not ctx.room.remote_participants:
         logger.info("No existing participants found - waiting for new connections")
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm ,drain_timeout=60,initialize_process_timeout=60))

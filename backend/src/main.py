@@ -135,39 +135,90 @@ class SaveUserPayload(BaseModel):
 # -------------------------------
 # HELPERS
 # -------------------------------
-def get_current_user(authorization: str = Header(...)):
+# def get_current_user(authorization: str = Header(...)):
+#     """
+#     Verify NextAuth JWT from frontend.
+#     Expect header: Authorization: Bearer <jwt>
+#     """
+#     if not authorization:
+#         raise HTTPException(status_code=401, detail="Missing Authorization header")
+    
+#     parts = authorization.split()
+#     if len(parts) != 2 or parts[0].lower() != "bearer":
+#         raise HTTPException(status_code=401, detail="Invalid Authorization header format")
+    
+#     token = parts[1]
+#     try:
+#         payload = jwt.decode(token, NEXTAUTH_SECRET, algorithms=[NEXTAUTH_ALGO])
+#         email = payload.get("email")
+#         name = payload.get("name")
+#         picture = payload.get("picture") or payload.get("image")
+        
+#         if not email:
+#             raise HTTPException(status_code=401, detail="Invalid token payload")
+#         existing_user = db.get_user_by_email(email)
+#         if not existing_user :
+#                 db.create_user(
+#                 name=name,
+#                 email=email,
+
+#                 )
+#                 logger.info(f"Created new user for the First Request {email}")
+#         return {"email": email, "name": name, "picture": picture}
+#     except JWTError as e:
+#         logger.error(f"JWT verification failed: {e}")
+#         raise HTTPException(status_code=401, detail="Invalid or expired token")
+def get_current_user(
+    authorization: str = Header(...),
+
+) -> Dict[str, Optional[str]]:
     """
-    Verify NextAuth JWT from frontend.
-    Expect header: Authorization: Bearer <jwt>
+    Verify NextAuth JWT from frontend and ensure user exists in DB.
+
+    Expected header:
+        Authorization: Bearer <jwt>
+
+    Returns:
+        dict: Contains user's email, name, and picture.
     """
     if not authorization:
+        logger.warning("Missing Authorization header.")
         raise HTTPException(status_code=401, detail="Missing Authorization header")
-    
+
     parts = authorization.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
+        logger.warning("Invalid Authorization header format.")
         raise HTTPException(status_code=401, detail="Invalid Authorization header format")
-    
-    token = parts[1]
-    try:
-        payload = jwt.decode(token, NEXTAUTH_SECRET, algorithms=[NEXTAUTH_ALGO])
-        email = payload.get("email")
-        name = payload.get("name")
-        picture = payload.get("picture") or payload.get("image")
-        
-        if not email:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
-        existing_user = db.get_user_by_email(email)
-        if not existing_user :
-                db.create_user(
-                name=name,
-                email=email,
 
-                )
-                logger.info(f"Created new user for the First Request {email}")
+    token = parts[1]
+
+    try:
+        # Decode the JWT
+        payload = jwt.decode(token, NEXTAUTH_SECRET, algorithms=[NEXTAUTH_ALGO])
+        email: Optional[str] = payload.get("email")
+        name: Optional[str] = payload.get("name")
+        picture: Optional[str] = payload.get("picture") or payload.get("image")
+
+        if not email:
+            logger.warning("Token payload missing 'email'.")
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+
+        # Check and create user if not present
+        existing_user = db.get_user_by_email(email)
+        if not existing_user:
+            db.create_user(name=name or "Unknown", email=email)
+            logger.info(f"Created new user record on first login: {email}")
+
+        logger.info(f"Authenticated user: {email}")
         return {"email": email, "name": name, "picture": picture}
+
     except JWTError as e:
         logger.error(f"JWT verification failed: {e}")
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    except Exception as e:
+        logger.exception(f"Unexpected error in get_current_user: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 # -------------------------------
 # ROUTES
 # -------------------------------
