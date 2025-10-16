@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "agent-starter-python"
 version = "1.0.0"
 description = "Simple voice AI assistant"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 
 dependencies = [
     "livekit-agents[openai,turn-detector,silero,cartesia,deepgram]~=1.2",
@@ -21,18 +21,15 @@ dependencies = [
     "pytz>=2025.2",
     "authlib==1.3.0",
     "python-jose[cryptography]==3.3.0",
-    
     "cryptography==41.0.7",
-    "redis==5.0.1" , 
+    "redis==5.0.1",
     "python-multipart>=0.0.18,<1.0.0",
-    
-
     # Security and token management
     "PyJWT==2.8.0",
     "passlib[bcrypt]==1.7.4",
-
     # Session management
     "itsdangerous==2.1.2",
+    "sqlalchemy>=2.0.43",
 ]
 
 

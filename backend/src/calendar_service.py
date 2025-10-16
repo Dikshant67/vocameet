@@ -2,6 +2,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+from googleapiclient.errors import HttpError
 import datetime
 import os
 import logging
@@ -16,27 +17,70 @@ class CalendarService:
     """A service for interacting with Google Calendar."""
 
     def __init__(self, credentials_path: str = "../config/credentials.json", token_path: str = "token.json"):
+        """
+        Initializes the Google Calendar client with proper authentication.
+
+        Args:
+            credentials_path (str): Path to OAuth 2.0 client credentials JSON file.
+            token_path (str): Path to store the user's access and refresh tokens.
+        """
         self.credentials_path = credentials_path
         self.token_path = token_path
-        self.service = self._get_calendar_service()
+        self.service = None
+
+        try:
+            logger.info("Initializing Google Calendar service...")
+            self.service = self._get_calendar_service()
+            logger.info("Google Calendar service initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize Google Calendar service: {e}", exc_info=True)
+            raise
 
     def _get_calendar_service(self):
-        """Authenticate and return the Google Calendar service object."""
+        """
+        Authenticate and return the Google Calendar service object.
+
+        Returns:
+            googleapiclient.discovery.Resource: Authorized Google Calendar service object.
+        """
         creds = None
-        if os.path.exists(self.token_path):
-            creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
+        try:
+            # Load token if exists
+            if os.path.exists(self.token_path):
+                logger.debug(f"Loading token from {self.token_path}")
+                creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
 
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, SCOPES)
-                creds = flow.run_local_server(port=8080,access_type="offline", prompt="consent")
+            # If no valid credentials, perform OAuth flow
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    logger.info("Refreshing expired credentials...")
+                    creds.refresh(Request())
+                    logger.info("Credentials refreshed successfully.")
+                else:
+                    logger.info(f"Running OAuth flow using credentials file {self.credentials_path}")
+                    flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, SCOPES)
+                    creds = flow.run_local_server(port=8080, access_type="offline", prompt="consent")
+                    logger.info("OAuth flow completed successfully.")
 
-            with open(self.token_path, "w") as token:
-                token.write(creds.to_json())
+                # Save the credentials for the next run
+                with open(self.token_path, "w") as token_file:
+                    token_file.write(creds.to_json())
+                    logger.debug(f"Credentials saved to {self.token_path}")
 
-        return build("calendar", "v3", credentials=creds)
+            # Build the calendar service
+            service = build("calendar", "v3", credentials=creds)
+            logger.debug("Google Calendar service object created.")
+            return service
+
+        except FileNotFoundError as fnf_err:
+            logger.error(f"Credentials file not found: {fnf_err}", exc_info=True)
+            raise
+        except HttpError as http_err:
+            logger.error(f"Google API returned an error: {http_err}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error while creating Google Calendar service: {e}", exc_info=True)
+            raise
 
     def create_meeting(self, summary: str, start_time: str, end_time: str, attendees: list[str],timezone : str):
         """Create a new calendar meeting."""

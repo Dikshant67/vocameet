@@ -1,0 +1,38 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Livekit Server",
+      "type": "shell",
+      "command": " cd server;.\\livekit-server.exe --dev",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Main.py",
+      "type": "shell",
+      "command": "cd backend ; .\\.venv\\Scripts\\activate ;cd src; uvicorn main:app --reload",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Agent.py",
+      "type": "shell",
+      "command": "cd backend ; .\\.venv\\Scripts\\activate ;cd src; python agent.py start",
+      "problemMatcher": []
+    },
+    {
+      "label": "Frontend Dev",
+      "type": "shell",
+      "command": "cd frontend ; npm run dev",
+      "problemMatcher": []
+    },
+    {
+  "label": "start all",
+  "dependsOn": [
+    "Livekit Server", // Case-sensitive
+    "Run Main.py",    // Case-sensitive
+    "Run Agent.py",   // Case-sensitive
+    "Frontend Dev"    // Case-sensitive
+  ]
+}
+  ]
+}

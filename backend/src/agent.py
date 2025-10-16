@@ -1,8 +1,13 @@
+from dataclasses import dataclass
 import logging
 import os
-from typing import Optional
-from livekit.plugins import azure
+import re
+import asyncio
 
+from typing import AsyncIterable, List, Optional
+from AppDatabase import AppDatabase
+from livekit.plugins import azure
+from livekit import rtc
 from dotenv import load_dotenv
 from livekit.agents import (
     NOT_GIVEN,
@@ -17,42 +22,108 @@ from livekit.agents import (
     WorkerOptions,
     cli,
     metrics,
+    ModelSettings,
+    ConversationItemAddedEvent
+    
+    
 )
 import datetime
 from livekit.agents.llm import function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from calendar_service import CalendarService
+
 calendar_service = CalendarService()
 logger = logging.getLogger("agent")
 
 load_dotenv()
+db=AppDatabase()
+@dataclass
+class UserData:
+    """ A class to store user information during the call"""
+    session : AgentSession =None
+    ctx: Optional[JobContext] = None
+    user_id : Optional[int]=None
+    session_guid : Optional[str]=None
+    user_name: Optional[str]=None
+    meeting_date : Optional[str]=None
+    meeting_title : Optional[str]=None
+    meeting_attendee : Optional[str]=None
+    last_conversation_for_reference : Optional[str]=None
+    user_email : Optional[str]=None
+    user_gender: Optional[str]=None 
+    user_age:Optional[int]=None
+    def is_identified(self) -> bool:
+        """Check if the user is identified."""
+        return self.user_name is not None 
+
+    def reset(self) -> None:
+        """Reset customer information."""
+        self.user_name = None
+     
+
+    def summarize(self) -> str:
+        """Return a summary of the user data."""
+        if self.is_identified():
+            return f"User: {self.user_name}  Email: {self.user_email} Age : {self.user_age} Gender : {self.user_gender}"
+        else:
+            return "User not yet identified."
+        
+RunContext_T=RunContext[UserData]
+    
 
 
-class Assistant(Agent):
-    def __init__(self) -> None:
+class AppointmentSchedulingAssistant(Agent):
+    def __init__(self,ctx : JobContext) -> None:
         now = datetime.datetime.now(datetime.timezone.utc).astimezone() # Timezone-aware
+        self.transcriptions : List[str] =[] 
+        self.transcription_buffer : str = ""
+
         current_date_str = now.strftime("%A, %B %d, %Y")
-        super().__init__(
-            instructions=f"""You are a friendly and helpful voice AI assistant designed for managing meetings . 
+       
+        self.base_instructions=f"""You are a friendly and helpful voice AI assistant designed for managing meetings . 
             The current date and time is {current_date_str}.
-            When you first connect,Greet user with a friendly greeting and offer a friendly welcome. 
-  
+            When you first connect,Greet user with a friendly greeting and offer a friendly welcome.for example if users name is Arun Kumar,Hi Arun Kumar
             **CRITICAL INSTRUCTION: Your responses MUST be in plain text only. NEVER use any special formatting, including asterisks, bolding, italics, or bullet points.**
             Do not accept the dates and time in the past suggest them to use in future dates and times.
             Do not read ,refer asterisk symbol in any context.
             You always ask questions one at a time.
             You warmly greet users, offer a friendly welcome, and are ready to assist with scheduling. 
-            You ask details to the user one at a time.
-            Your responses are clear, concise, and to the point, without complex formatting or punctuation. You are curious, friendly, 
+            You ask details to the user one at a time
+            Your responses are clear, concise, and to the point, without complex formatting or punctuation or emojisvb . You are curious, friendly, 
             and have a sense of humor. Your goal is to provide a smooth and efficient user experience for all meeting scheduling needs""",
-        )
+        super().__init__(instructions=self.base_instructions)
 
     # all functions annotated with @function_tool will be passed to the LLM when this
     # agent is active
+    # def run_agent_with_user(user_id: str):
+    # # Your logic here
+    #     print(f"Running agent for user: {user_id}")
+    #     # Simulate fetching or processing user data
+    #     user_data = {
+    #         "user_id": user_id,
+    #         "preferences": ["AI", "Python", "FastAPI"]
+    #     }
     
+    #     # Do something with user_data...
+    #     return f"Processed data for user {user_data['user_id']}"
+    async def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings):  
+        async def process_text():  
+            async for chunk in text:  
+            # Remove markdown formatting  
+                modified_chunk = chunk.replace("*", "").replace("_", "").replace("#", "")  
+                yield modified_chunk  
+  
+        return Agent.default.tts_node(self, process_text(), model_settings)
+    async def append_instructions(self, additional_instructions: str):  
+        """Append new instructions to existing ones."""  
+        current_instructions = self.base_instructions  
+        new_instructions = f"{current_instructions}\n\nAdditional instructions: {additional_instructions}"  
+        await self.update_instructions(new_instructions)  
+        logger.info(new_instructions)
+        self.base_instructions = new_instructions  # Keep track for future appends
     @function_tool
-    async def lookup_weather(self, context: RunContext, location: str):
+    async def lookup_weather(self, context: RunContext_T, location: str):
         """Use this tool to look up current weather information in the given location.
 
         If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
@@ -65,94 +136,198 @@ class Assistant(Agent):
 
         return "sunny with a temperature of 70 degrees."
     @function_tool
-    async def get_current_date(self,context : RunContext) -> str:
+    async def get_the_summary_of_user_info(self,context: RunContext_T)-> str:
+        """Used to get the summary of the user Details such as Name, Age, Gender"""
+        # safely extract values with defaults
+        name = getattr(context.userdata, "user_name", None) or "Unknown"
+        age = getattr(context.userdata, "user_age", None) or "N/A"
+        gender = getattr(context.userdata, "user_gender", None) or "Not specified"
+
+        return f"User's Name is {name}, Age is {age}, Gender is {gender}."
+    @function_tool
+    async def get_current_date(self,context : RunContext_T) -> str:
         """Used to get the current date and time."""
         now = datetime.datetime.now()
         return now.strftime("%A, %B %d, %Y at %I:%M %p")
+    
+    async def save_meeting_in_db(self,event_id :str ,user_id:int,expert_id:int,title:str,start_time:str,end_time:str,attendees:list[str]):
+        db.create_appointment(event_id,user_id,expert_id,title,start_time,end_time)
+        return "meeting saved successfully"
+        
+        
+        
     @function_tool
     async def schedule_meeting(
         self,
-        context: RunContext,
+        context: "RunContext_T",
         title: str,
         start_time: str,
         end_time: str,
-        attendees: list[str],
+        attendees: List[str],
         timezone: str = "Asia/Kolkata"
-    ):
+    ) -> str:
         """
         Schedule a meeting in Google Calendar.
-    
+
         Guidance for LLM:
-        - Always request all arguments: `title`, `start_time`, `end_time`, and `attendees` one by one.
-        - If any argument is missing, politely ask the user for the missing detail.
-          Example: "Could you please tell me the meeting title?" 
-                   "What time should the meeting start and end?"
-        - If the user request is ambiguous (e.g., "set up a meeting tomorrow" without a time),
-          clarify before calling the tool.Confirm all the details before scheduling.
-    
+            - Always request all arguments (`title`, `start_time`, `end_time`,
+            and `attendees`) one by one.
+            - If any argument is missing, politely ask the user for it.
+            Example:
+                "Could you please tell me the meeting title?"
+                "What time should the meeting start and end?"
+            - If the user request is ambiguous (e.g., "set up a meeting tomorrow"
+            without a time), clarify before calling the tool.
+            - Confirm all details before scheduling.
+
         Args:
-            context (RunContext): The current run context (not user-supplied).
-            Ask one by one each arg,so that it will be easy for the user to speak the args.
+            context (RunContext_T): The current run context (not user-supplied).
             title (str): The meeting title or subject.
-            start_time (str): ISO 8601 formatted start datetime (e.g., "2025-09-03T10:00:00").
+            start_time (str): ISO 8601 formatted start datetime
+                (e.g., "2025-09-03T10:00:00").
             end_time (str): ISO 8601 formatted end datetime.
-            attendees (list[str]): List of attendee email addresses.Strictly Do not make any spaces in the input email.
-            timezone (str, optional): Time zone for the meeting. Defaults to "Asia/Kolkata" .
-    
+            attendees (List[str]): List of attendee email addresses.
+                (Strictly avoid spaces in the input emails.)
+            timezone (str, optional): Time zone for the meeting.
+                Defaults to "Asia/Kolkata".
+
         Returns:
-            str: Confirmation message with meeting title, start time, end time and date
+            str: Confirmation message with meeting title, start time, end time, and
+                date.
+
+        Raises:
+            ValueError: If required arguments are missing or invalid.
+            RuntimeError: If the meeting creation or database save fails.
         """
-        event_id, link = calendar_service.create_meeting(title, start_time, end_time, attendees,timezone)
-        return f"Meeting created:{title})"
-    
+        if not all([title, start_time, end_time, attendees]):
+            raise ValueError(
+                "Missing one or more required arguments: "
+                "title, start_time, end_time, attendees."
+            )
+
+        try:
+            event_id = calendar_service.create_meeting(
+                summary=title,
+                start_time=start_time,
+                end_time=end_time,
+                attendees=attendees,
+                timezone=timezone,
+            )
+
+            if isinstance(event_id, tuple):
+                event_id = event_id[0]
+
+            save_result = await self.save_meeting_in_db(
+                event_id=event_id,
+                user_id=context.userdata.user_id,
+                expert_id=2,
+                title=title,
+                start_time=start_time,
+                end_time=end_time,
+                attendees=attendees,
+            )
+
+            confirmation_message = (
+                f"Meeting '{title}' successfully created.\n"
+                f"Start: {start_time}\n"
+                f"End: {end_time}\n"
+                f"Attendees: {', '.join(attendees)}\n"
+                f"Database status: {save_result}"
+            )
+
+            return confirmation_message
+
+        except ValueError as exc:
+            logger.error("Invalid input while scheduling meeting: %s", exc)
+            raise
+
+        except Exception as exc:
+            logger.exception("Failed to schedule meeting: %s", exc)
+            raise RuntimeError(
+                "An unexpected error occurred while scheduling the meeting."
+            ) from exc
+
     @function_tool
     async def list_meetings_by_date(
         self,
-        context: RunContext,
+        context: "RunContext_T",
         date: str,
         max_results: int = 10
-    ):
+    ) -> List[dict] | str:
         """
         List meetings scheduled on a specific date from Google Calendar.
-    
+
         Guidance for LLM:
-        - Always ask the user for the date (format: YYYY-MM-DD).
-        - If the user says "today" or "tomorrow", resolve it to an actual date using current timezone.
-        - If no meetings are found on that date, politely inform the user.
-        - This tool is especially useful when the user wants to cancel/reschedule a meeting 
-          but does not remember the event ID.
-    
+            - Always ask the user for the date (format: YYYY-MM-DD).
+            - If the user says "today" or "tomorrow", resolve it to an actual date
+            using the current timezone.
+            - If no meetings are found on that date, politely inform the user.
+            - This tool is especially useful when the user wants to cancel or
+            reschedule a meeting but does not remember the event ID.
+
         Args:
-            context (RunContext): The current run context (not user-supplied).
+            context (RunContext_T): The current run context (not user-supplied).
             date (str): The date to search for meetings (format YYYY-MM-DD).
-            max_results (int, optional): Maximum number of meetings to list. Defaults to 10.
-    
+            max_results (int, optional): Maximum number of meetings to list.
+                Defaults to 10.
+
         Returns:
-            list[dict] | str: A list of meeting summaries with ID, title, start, and end times,
-                              or a message saying no meetings are found.
+            List[dict] | str: A list of meetings with ID, title, start, and end
+                times, or a message if no meetings are found.
+
+        Raises:
+            ValueError: If `date` is empty or not in a valid format.
+            RuntimeError: If there is an unexpected error during retrieval.
         """
-        events = calendar_service.list_meetings(max_results)
-    
-        # Filter events by date
-        filtered_events = []
-        for event in events:
-            start_time = event["start"].get("dateTime", event["start"].get("date"))
-            if start_time.startswith(date):  # Compare with YYYY-MM-DD
-                filtered_events.append({
-                    "id": event["id"],
-                    "summary": event.get("summary", "No title"),
-                    "start": start_time,
-                    "end": event["end"].get("dateTime", event["end"].get("date")),
-                })
-    
-        if not filtered_events:
-            return f"No meetings found on {date}."
-    
-        return filtered_events
+        if not date or not isinstance(date, str):
+            raise ValueError("A valid date string (YYYY-MM-DD) must be provided.")
+
+        try:
+            events = calendar_service.list_meetings(max_results=max_results)
+            if not events:
+                logger.info("No events returned from calendar service.")
+                return f"No meetings found on {date}."
+
+            filtered_events: List[dict[str, str]] = []
+            for event in events:
+                start_info = event.get("start", {})
+                end_info = event.get("end", {})
+
+                start_time = start_info.get("dateTime") or start_info.get("date")
+                end_time = end_info.get("dateTime") or end_info.get("date")
+
+                if not start_time:
+                    logger.warning("Skipping event with missing start time: %s", event)
+                    continue
+
+                if start_time.startswith(date):
+                    filtered_events.append({
+                        "id": event.get("id", "Unknown ID"),
+                        "summary": event.get("summary", "No title"),
+                        "start": start_time,
+                        "end": end_time or "Unknown end time",
+                    })
+
+            if not filtered_events:
+                logger.info("No meetings found for date: %s", date)
+                return f"No meetings found on {date}."
+
+            logger.info("Found %d meetings for date %s", len(filtered_events), date)
+            return filtered_events
+
+        except ValueError as exc:
+            logger.error("Invalid date input for list_meetings_by_date: %s", exc)
+            raise
+
+        except Exception as exc:
+            logger.exception("Error listing meetings for date %s: %s", date, exc)
+            raise RuntimeError(
+                "An unexpected error occurred while fetching meetings."
+            ) from exc    
     @function_tool
     async def list_meetings(
         self,
-        context: RunContext,
+        context: RunContext_T,
         max_results: int = 10
     ):
         """
@@ -160,220 +335,467 @@ class Assistant(Agent):
 
         Guidance for LLM:
         - This tool does not require user-provided arguments (except optional `max_results`).
-        - If the meetings found just mention titles,dates and time to the user.
-        - If the user does not specify a limit, default to 10.
+        - If meetings are found, mention their titles, start dates, and times to the user.
         - If no meetings are found, politely inform the user.
+        - The default maximum number of results is 10 unless the user specifies otherwise.
 
         Args:
-            context (RunContext): The current run context (not user-supplied).
+            context (RunContext_T): The current run context (not user-supplied).
             max_results (int, optional): Maximum number of meetings to list. Defaults to 10.
 
         Returns:
             list[dict] | str: A list of meeting summaries with ID, title, start, and end times,
                             or a message saying no meetings are found.
         """
-        events = calendar_service.list_meetings(max_results)
-        if not events:
-            return "No upcoming meetings found."
-        return [
-            {
-                "id": event["id"],
-                "summary": event.get("summary", "No title"),
-                "start": event["start"].get("dateTime", event["start"].get("date")),
-                "end": event["end"].get("dateTime", event["end"].get("date")),
-            }
-            for event in events
-        ]
+        try:
+            logger.info(f"[list_meetings] Fetching up to {max_results} upcoming meetings from Google Calendar.")
 
+            events = calendar_service.list_meetings(max_results)
+            logger.debug(f"[list_meetings] Raw events received: {events}")
+
+            if not events or len(events) == 0:
+                logger.info("[list_meetings] No upcoming meetings found.")
+                return "No upcoming meetings found."
+
+            formatted_meetings = []
+            for event in events:
+                start_time = event["start"].get("dateTime", event["start"].get("date"))
+                end_time = event["end"].get("dateTime", event["end"].get("date"))
+
+                formatted_meetings.append({
+                    "id": event["id"],
+                    "summary": event.get("summary", "No title"),
+                    "start": start_time,
+                    "end": end_time,
+                })
+
+            logger.info(f"[list_meetings] Successfully fetched {len(formatted_meetings)} upcoming meetings.")
+            return formatted_meetings
+
+        except Exception as e:
+            logger.error(f"[list_meetings] Error fetching meetings: {str(e)}", exc_info=True)
+            return f"An error occurred while fetching meetings: {str(e)}"
 
     @function_tool
     async def cancel_meeting(
-    self,
-    context: RunContext,
-    event_id: Optional[str] = None,
-    date: Optional[str] = None,
-    ordinal: Optional[int] = None
-    ):
+        self,
+        context: RunContext_T,
+        event_id: Optional[str] = None,
+        date: Optional[str] = None,
+        ordinal: Optional[int] = None
+    ) -> str | dict:
         """
         Cancel a meeting in Google Calendar.
 
         Guidance for LLM:
-        - If `event_id` is provided, the tool will cancel the meeting directly.
-        - If `date` is provided without an `event_id`, the tool will list all meetings on that day and ask for confirmation.
-        - If the user then specifies an ordinal number (e.g., "the first one", "the 3rd one"), the LLM should call this tool again with both `date` and `ordinal` to cancel the specific meeting.
-        - If neither `event_id` nor `date` are provided, the tool will ask the user for more information.
+            - If `event_id` is provided, cancel the meeting directly.
+            - If `date` is provided without an `event_id`, list meetings on that day
+            and ask for confirmation.
+            - If the user specifies an ordinal (e.g., "the 1st" or "3rd"), cancel
+            the specific meeting.
+            - If neither `event_id` nor `date` are provided, ask the user for
+            more information.
 
         Args:
-            context (RunContext): The current run context (not user-supplied).
+            context (RunContext_T): The current run context (not user-supplied).
             event_id (str, optional): The unique ID of the meeting to cancel.
             date (str, optional): The date (YYYY-MM-DD) to search for meetings to cancel.
-            ordinal (int, optional): The ordinal number of the meeting to cancel from the list of meetings on the given date (1-based index).
+            ordinal (int, optional): The ordinal number (1-based) of the meeting to cancel
+                                    from the list on the given date.
 
         Returns:
             str | dict:
-                - A confirmation message if the meeting was cancelled.
-                - A dictionary with a message and a list of meetings if a date was provided but no ordinal.
-                - An error message if no meetings are found or the ordinal is invalid.
-                - A message asking for more information if no arguments are provided.
+                - Confirmation message if a meeting was cancelled.
+                - A dictionary with a message and a list of meetings if date is provided but no ordinal.
+                - Error message if no meetings are found or ordinal is invalid.
+                - Message asking for more information if no arguments are provided.
         """
-        if event_id:
-            success = calendar_service.cancel_meeting(event_id)
-            return f"✅ Meeting {event_id} cancelled." if success else f"❌ Failed to cancel meeting."
-
-        if date:
-            # First, get the list of meetings for the given date.
-            events = calendar_service.list_meetings(max_results=100) # Get a good number of events to filter
-            meetings_on_date = [
-                {
-                    "id": event["id"],
-                    "summary": event.get("summary", "No title"),
-                    "start": event["start"].get("dateTime", event["start"].get("date")),
-                    "end": event["end"].get("dateTime", event["end"].get("date")),
-                }
-                for event in events
-                if event["start"].get("dateTime", event["start"].get("date")).startswith(date)
-            ]
-
-            if not meetings_on_date:
-                return f"No meetings found on {date}."
-
-            if ordinal:
-                if 1 <= ordinal <= len(meetings_on_date):
-                    event_to_cancel = meetings_on_date[ordinal - 1]
-                    event_id_to_cancel = event_to_cancel['id']
-                    summary = event_to_cancel['summary']
-                    success = calendar_service.cancel_meeting(event_id_to_cancel)
-                    return f"✅ Meeting '{summary}' with ID {event_id_to_cancel} cancelled." if success else f"❌ Failed to cancel meeting with ID {event_id_to_cancel}."
+        try:
+            if event_id:
+                logger.info(f"[cancel_meeting] Cancelling meeting with ID: {event_id}")
+                success = calendar_service.cancel_meeting(event_id)
+                if success:
+                    logger.info(f"[cancel_meeting] Meeting {event_id} successfully cancelled.")
+                    return f"✅ Meeting {event_id} cancelled."
                 else:
-                    return f"Invalid choice. Please provide a number between 1 and {len(meetings_on_date)}."
+                    logger.warning(f"[cancel_meeting] Failed to cancel meeting {event_id}.")
+                    return f"❌ Failed to cancel meeting {event_id}."
 
-            return {
-                "message": f"I found {len(meetings_on_date)} meetings on {date}. Please tell me which one to cancel by providing its number.",
-                "meetings": meetings_on_date
-            }
+            if date:
+                logger.info(f"[cancel_meeting] Listing meetings on date: {date}")
+                events = calendar_service.list_meetings(max_results=100)
+                meetings_on_date = [
+                    {
+                        "id": event["id"],
+                        "summary": event.get("summary", "No title"),
+                        "start": event["start"].get("dateTime", event["start"].get("date")),
+                        "end": event["end"].get("dateTime", event["end"].get("date")),
+                    }
+                    for event in events
+                    if event["start"].get("dateTime", event["start"].get("date")).startswith(date)
+                ]
 
-        return "Could you please provide the meeting ID or the date of the meeting you'd like to cancel?"   
+                if not meetings_on_date:
+                    logger.info(f"[cancel_meeting] No meetings found on {date}.")
+                    return f"No meetings found on {date}."
+
+                if ordinal:
+                    if 1 <= ordinal <= len(meetings_on_date):
+                        event_to_cancel = meetings_on_date[ordinal - 1]
+                        event_id_to_cancel = event_to_cancel['id']
+                        summary = event_to_cancel['summary']
+                        logger.info(f"[cancel_meeting] Cancelling meeting '{summary}' with ID {event_id_to_cancel}")
+                        success = calendar_service.cancel_meeting(event_id_to_cancel)
+                        if success:
+                            logger.info(f"[cancel_meeting] Meeting '{summary}' cancelled successfully.")
+                            return f"✅ Meeting '{summary}' with ID {event_id_to_cancel} cancelled."
+                        else:
+                            logger.warning(f"[cancel_meeting] Failed to cancel meeting '{summary}' with ID {event_id_to_cancel}.")
+                            return f"❌ Failed to cancel meeting with ID {event_id_to_cancel}."
+                    else:
+                        logger.warning(f"[cancel_meeting] Invalid ordinal {ordinal} provided.")
+                        return f"Invalid choice. Please provide a number between 1 and {len(meetings_on_date)}."
+
+                logger.info(f"[cancel_meeting] Found {len(meetings_on_date)} meetings on {date}, awaiting user choice.")
+                return {
+                    "message": f"I found {len(meetings_on_date)} meetings on {date}. "
+                            "Please tell me which one to cancel by providing its number.",
+                    "meetings": meetings_on_date
+                }
+
+            logger.info("[cancel_meeting] No event_id or date provided; requesting more info from user.")
+            return "Could you please provide the meeting ID or the date of the meeting you'd like to cancel?"
+
+        except Exception as e:
+            logger.error(f"[cancel_meeting] Error cancelling meeting: {str(e)}", exc_info=True)
+            return f"An error occurred while cancelling the meeting: {str(e)}"
+
     @function_tool
     async def reschedule_meeting(
         self,
-        context: RunContext,
+        context: RunContext_T,
         event_id: str,
         new_start: str,
         new_end: str
-    ):
+    ) -> str:
         """
         Reschedule a meeting in Google Calendar.
 
         Guidance for LLM:
-        - Always provide the `event_id`, `new_start`, and `new_end`.
-        - If any argument is missing, ask politely before calling the tool.
+            - Always provide the `event_id`, `new_start`, and `new_end`.
+            - If any argument is missing, ask politely before calling the tool.
             Example: "Could you please provide the new start and end time for the meeting?"
-        - If the user says "reschedule my next meeting" without specifying which one,
+            - If the user says "reschedule my next meeting" without specifying which one,
             list upcoming meetings and confirm which meeting to move.
 
         Args:
-            context (RunContext): The current run context (not user-supplied).
+            context (RunContext_T): The current run context (not user-supplied).
             event_id (str): The unique ID of the meeting to reschedule.
             new_start (str): ISO 8601 formatted new start datetime.
             new_end (str): ISO 8601 formatted new end datetime.
 
         Returns:
-            str: Confirmation message with updated meeting link.
+            str: Confirmation message with updated meeting link or error message.
         """
-        link = calendar_service.reschedule_meeting(event_id, new_start, new_end)
-        return f"Meeting rescheduled:" 
+        try:
+            logger.info(f"[reschedule_meeting] Attempting to reschedule meeting ID: {event_id}")
+            
+            if not event_id or not new_start or not new_end:
+                logger.warning("[reschedule_meeting] Missing required arguments.")
+                return "Please provide the meeting ID, new start time, and new end time."
+
+            link = calendar_service.reschedule_meeting(event_id, new_start, new_end)
+
+            if link:
+                logger.info(f"[reschedule_meeting] Meeting {event_id} successfully rescheduled.")
+                return f"✅ Meeting successfully rescheduled. Updated link: {link}"
+            else:
+                logger.warning(f"[reschedule_meeting] Failed to reschedule meeting {event_id}.")
+                return f"❌ Failed to reschedule meeting {event_id}."
+
+        except Exception as e:
+            logger.error(f"[reschedule_meeting] Error rescheduling meeting {event_id}: {str(e)}", exc_info=True)
+            return f"An error occurred while rescheduling the meeting: {str(e)}"
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
 
 async def entrypoint(ctx: JobContext):
-    # Logging setup
-    # Add any other context you want in all log entries here
+    # Initialize user data with context
+    userdata = UserData(ctx=ctx)
+    
+    appointment_scheduling_assistant = AppointmentSchedulingAssistant(ctx)
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
-
-    # Set up a voice AI pipeline using OpenAI, Cartesia, Deepgram, and the LiveKit turn detector
-    session = AgentSession(
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all providers at https://docs.livekit.io/agents/integrations/llm/
+    session = AgentSession[UserData](
+        userdata=userdata,
         llm=openai.LLM.with_azure(
         azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"), # or AZURE_OPENAI_ENDPOINT
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"), 
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION"), # or OPENAI_API_VERSION
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION"), 
     ),
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all providers at https://docs.livekit.io/agents/integrations/stt/
-        
-        #  stt=deepgram.STT(model="nova-3", language="multi"),
         stt = azure.STT(speech_key=os.getenv("AZURE_SPEECH_KEY"), speech_region=os.getenv("AZURE_SPEECH_REGION"),language="en-IN"),
         tts = azure.TTS(speech_key=os.getenv("AZURE_SPEECH_KEY"), speech_region=os.getenv("AZURE_SPEECH_REGION"),voice="en-IN-AartiNeural"),
-        #voice="mr-IN-AarohiNeural"
-        #language="mr-IN"
-                        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all providers at https://docs.livekit.io/agents/integrations/tts/
-        # tts=cartesia.TTS(voice="6f84f4b8-58a2-430c-8c79-688dad597532"),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
+    
+    # @session.on("agent_false_interruption")
+    # def _on_agent_false_interruption(ev: AgentFalseInterruptionEvent):
+    #     logger.info("false positive interruption, resuming")
+    #     session.generate_reply(instructions=ev.extra_instructions or NOT_GIVEN)
+    # usage_collector = metrics.UsageCollector()
+    # @session.on("metrics_collected")
+    # def _on_metrics_collected(ev: MetricsCollectedEvent):
+    #     metrics.log_metrics(ev.metrics)
+    #     logger.info("metrics printed on console -----------------------")
+    #     usage_collector.collect(ev.metrics)
+    @ctx.room.on("participant_disconnected")
+    def on_participant_disconnected(participant: rtc.RemoteParticipant):
+        """Called when a user leaves the room"""
+        logger.info(f"User disconnected: {participant}")
+    @ctx.room.on("participant_connected")
+    def on_participant_connected(participant: rtc.RemoteParticipant):
+        """Called when a user enters the room"""
+        logger.info(f"User Connected: {participant}" )  
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead:
-    # session = AgentSession(
-    #     # See all providers at https://docs.livekit.io/agents/integrations/realtime/
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
+    @ctx.room.on("track_subscribed")
+    def on_track_subscribed(
+        track: rtc.Track,
+        publication: rtc.RemoteTrackPublication,
+        participant: rtc.RemoteParticipant,
+    ) -> None:
+        """
+        Event handler triggered when a remote participant's track is subscribed.
 
-    # sometimes background noise could interrupt the agent session, these are considered false positive interruptions
-    # when it's detected, you may resume the agent's speech
-    @session.on("agent_false_interruption")
-    def _on_agent_false_interruption(ev: AgentFalseInterruptionEvent):
-        logger.info("false positive interruption, resuming")
-        session.generate_reply(instructions=ev.extra_instructions or NOT_GIVEN)
+        Responsibilities:
+            - Extract and log session metadata (session GUID).
+            - Populate appointment assistant user context (name, email, etc.).
+            - Retrieve and set user-related information from the database.
+            - Generate and append contextual instructions asynchronously.
 
-    # Metrics collection, to measure pipeline performance
-    # For more information, see https://docs.livekit.io/agents/build/metrics/
-    usage_collector = metrics.UsageCollector()
+        Args:
+            track (rtc.Track): The subscribed media track.
+            publication (rtc.RemoteTrackPublication): Publication details.
+            participant (rtc.RemoteParticipant): Remote participant whose track was subscribed.
+        """
+        try:
+            if not appointment_scheduling_assistant:
+                logger.warning("[on_track_subscribed] Appointment scheduling assistant is not initialized.")
+                return
 
-    @session.on("metrics_collected")
-    def _on_metrics_collected(ev: MetricsCollectedEvent):
-        metrics.log_metrics(ev.metrics)
-        usage_collector.collect(ev.metrics)
+            # Extract session GUID from participant metadata
+            if participant.metadata:
+                import json
+                metadata = json.loads(participant.metadata)
+                session_guid = metadata.get("sessionGuid")
+                if session_guid:
+                    logger.info(f"[on_track_subscribed] Session GUID: {session_guid}")
+                else:
+                    logger.debug("[on_track_subscribed] No session GUID found in metadata.")
 
-    async def log_usage():
-        summary = usage_collector.get_summary()
-        logger.info(f"Usage: {summary}")
+            # Update user information in the assistant session
+            user_data = appointment_scheduling_assistant.session.userdata
+            user_data.user_name = participant.name
+            user_data.user_email = participant.identity
+            user_data.session_guid = session_guid
 
-    ctx.add_shutdown_callback(log_usage)
+            # Check if the user can be identified
+            if not user_data.is_identified():
+                logger.info(f"[on_track_subscribed] Participant {participant.name} is not yet identified.")
+                return
 
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/integrations/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/integrations/avatar/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
+            # Retrieve user details from the database
+            user_id = db.get_user_by_email(participant.identity)
+            if user_id:
+                user_data.user_id = user_id
+                logger.info(f"[on_track_subscribed] User found: ID={user_id}")
 
-    # Start the session, which initializes the voice pipeline and warms up the models
+                transcript = db.get_transcription(user_id)
+                user_data.last_conversation_for_reference = transcript
+            else:
+                logger.warning(f"[on_track_subscribed] No user found for email: {participant.identity}")
+                return
+
+            # Assign default user details (could be dynamic later)
+            user_data.user_age = 25
+            user_data.user_gender = "MALE"
+
+            # Build context instructions
+            instructions = (
+                f"You are assisting {user_data.user_name}, "
+                f"a {user_data.user_age}-year-old {user_data.user_gender}. "
+                f"Their email is {user_data.user_email}. "
+            )
+
+            if user_data.last_conversation_for_reference:
+                instructions += (
+                    "Here is the last conversation for context:\n"
+                    "Pick only the key terms from this text and use them as memory "
+                    "while talking with the user:\n"
+                    f"{user_data.last_conversation_for_reference}\n"
+                )
+
+            # Append contextual instructions asynchronously
+            asyncio.create_task(
+                appointment_scheduling_assistant.append_instructions(instructions)
+            )
+            logger.info(f"[on_track_subscribed] Instructions appended for user {user_data.user_name}.")
+
+        except Exception as e:
+            logger.error(f"[on_track_subscribed] Error processing subscription: {str(e)}", exc_info=True)
+                 
     await session.start(
-        agent=Assistant(),
+        agent=appointment_scheduling_assistant,
         room=ctx.room,
-        room_input_options=RoomInputOptions(
-            # LiveKit Cloud enhanced noise cancellation
-            # - If self-hosting, omit this parameter
-            # - For telephony applications, use `BVCTelephony` for best results
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
+        room_input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVC(),),
     )
+    # await ctx.connect()
+    @session.on("conversation_item_added")
+    def conversation_item_added(event: ConversationItemAddedEvent):
+        """
+        Handles conversation_item_added events and stores role-based messages
+        (user/assistant) in a single row per session using add_transcription_with_guid.
+        """
+        try:
+            # The actual ChatMessage object is inside `event.item`
+            chat_msg = event.item  
 
-    # Join the room and connect to the user
-    await ctx.connect()
+            role = getattr(chat_msg, "role", None)
+            content_list = getattr(chat_msg, "content", None)
+
+            if not role or not content_list:
+                logger.warning("ChatMessage missing role or content, ignoring item.")
+                return
+
+            # Join content list to single string
+            content = " ".join(content_list).strip()
+            if not content:
+                logger.warning("Empty content received, ignoring item.")
+                return
+
+            # Get session info
+            user_id = appointment_scheduling_assistant.session.userdata.user_id
+            session_guid = appointment_scheduling_assistant.session.userdata.session_guid
+            if not session_guid:
+                logger.warning("No session GUID found for this transcription.")
+                return
+
+            # Prefix message with role
+            role_prefix = "user: " if role == "user" else "agent: "
+            new_transcription = f"{role_prefix}{content}"
+
+            logger.info(f"Handling transcription for session: {session_guid}")
+            # Save to DB using existing method
+            db.add_transcription_with_guid(
+                user_id=user_id,
+                new_transcription=new_transcription,
+                session_guid=session_guid
+            )
+
+        except Exception as e:
+            logger.error(f"Error processing conversation item: {e}", exc_info=True)
 
 
+        
+    # @session.on("user_input_transcribed")
+    # def on_transcript(transcript):
+    #     """
+    #     Handles incremental transcription updates from user speech input.
+
+    #     This method:
+    #     - Buffers partial speech segments until a sentence is complete.
+    #     - Deduplicates processed text fragments.
+    #     - Stores new transcriptions in DB (tagged by user_id and session GUID).
+    #     - Logs all major steps for observability and debugging.
+
+    #     Args:
+    #         transcript: The transcribed text object with .transcript attribute.
+    #     """
+
+    #     try:
+    #         text = transcript.transcript.strip()
+    #         if not text:
+    #             logger.debug("Received empty transcript — ignoring.")
+    #             return
+
+    #         session_guid = appointment_scheduling_assistant.session.userdata.session_guid
+    #         if not session_guid:
+    #             logger.warning("No session GUID found for this transcription.")
+    #         else:
+    #             logger.info(f"Handling transcription for session: {session_guid}")
+
+    #         # --- Manage transcription buffer ---
+    #         buffer = appointment_scheduling_assistant.transcription_buffer
+    #         text_lower = text.lower()
+
+    #         if buffer and text_lower.startswith(buffer.lower()):
+    #             # Incremental update (overwrite)
+    #             appointment_scheduling_assistant.transcription_buffer = text
+    #         else:
+    #             # New text (append)
+    #             appointment_scheduling_assistant.transcription_buffer = f"{buffer} {text}".strip()
+
+    #         logger.debug(
+    #             f"Updated transcription buffer: "
+    #             f"{appointment_scheduling_assistant.transcription_buffer[:100]}..."
+    #         )
+
+    #         # --- Sentence segmentation ---
+    #         sentences = re.split(
+    #             r'(?<=[.!?])\s+',
+    #             appointment_scheduling_assistant.transcription_buffer.strip()
+    #         )
+
+    #         # Retain last incomplete fragment in buffer
+    #         complete_sentences = sentences[:-1]
+    #         appointment_scheduling_assistant.transcription_buffer = (
+    #             sentences[-1] if sentences else ""
+    #         )
+
+    #         # --- Deduplication setup ---
+    #         processed_transcriptions = getattr(
+    #             appointment_scheduling_assistant, "transcriptions", []
+    #         )
+
+    #         # --- Process each complete sentence ---
+    #         for sentence in complete_sentences:
+    #             clean_sentence = sentence.strip()
+    #             if not clean_sentence:
+    #                 continue
+
+    #             normalized = re.sub(r'\s+', ' ', clean_sentence.lower())
+
+    #             if len(normalized) <= 5:
+    #                 continue  # Skip very short noise fragments
+
+    #             if normalized in processed_transcriptions:
+    #                 logger.debug(f"Duplicate sentence ignored: {clean_sentence}")
+    #                 continue
+
+    #             # New valid transcription
+    #             processed_transcriptions.append(normalized)
+    #             logger.info(f"Processing new transcription: {clean_sentence}")
+
+    #             user_id = getattr(appointment_scheduling_assistant.session.userdata, "user_id", None)
+    #             if not user_id:
+    #                 logger.warning("User ID not found — skipping DB write.")
+    #                 continue
+
+    #             # --- Save to DB (with session GUID) ---
+    #             try:
+    #                 db.add_transcription_with_guid(user_id, clean_sentence, session_guid)
+    #                 logger.info(f"Saved transcription to DB (user_id={user_id}, session_guid={session_guid}).")
+    #             except Exception as db_error:
+    #                 logger.error(f"DB error while saving transcription: {db_error}")
+
+    #     except Exception as e:
+    #         logger.exception(f"Error in on_transcript handler: {e}")
+
+    if not ctx.room.remote_participants:
+        logger.info("No existing participants found - waiting for new connections")
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
