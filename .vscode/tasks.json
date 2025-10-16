@@ -16,7 +16,7 @@
     {
       "label": "Run Agent.py",
       "type": "shell",
-      "command": "cd backend ; .\\.venv\\Scripts\\activate ;cd src;cd agent;python agent.py start",
+      "command": "cd backend ; .\\.venv\\Scripts\\activate ;cd src;cd agent;python agent.py dev",
       "problemMatcher": []
     },
     {
