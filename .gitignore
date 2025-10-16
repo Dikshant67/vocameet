@@ -2,3 +2,6 @@
 backend/config/credentials.json
 backend/src/token.json
 server/livekit-server.exe
+backend/src/services/token.json
+backend/src/agent/token.json
+backend/src/db/app_data.db
