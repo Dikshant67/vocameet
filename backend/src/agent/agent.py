@@ -25,8 +25,6 @@ from livekit.agents import (
     metrics,
     ModelSettings,
     ConversationItemAddedEvent
-    
-    
 )
 import datetime
 from livekit.agents.llm import function_tool
@@ -36,37 +34,45 @@ import pytz
 from services.calendar_service import CalendarService
 
 calendar_service = CalendarService()
+
 # -------------------------------
 # CONFIG & LOGGING
 # -------------------------------
-logging.basicConfig(filename="../../logs/assistant.log",level=logging.INFO, format="%(levelname)s: %(asctime)s - %(message)s")
+logging.basicConfig(
+    filename="../../logs/assistant.log",
+    level=logging.INFO,
+    format="%(levelname)s: %(asctime)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
-db=AppDatabase()
+db = AppDatabase()
+
+
 @dataclass
 class UserData:
     """ A class to store user information during the call"""
-    session : AgentSession =None
+    session: AgentSession = None
     ctx: Optional[JobContext] = None
-    user_id : Optional[int]=None
-    session_guid : Optional[str]=None
-    user_name: Optional[str]=None
-    meeting_date : Optional[str]=None
-    meeting_title : Optional[str]=None
-    meeting_attendee : Optional[str]=None
-    last_conversation_for_reference : Optional[str]=None
-    user_email : Optional[str]=None
-    user_gender: Optional[str]=None 
-    user_age:Optional[int]=None
+    user_id: Optional[int] = None
+    session_guid: Optional[str] = None
+    user_name: Optional[str] = None
+    meeting_date: Optional[str] = None
+    meeting_title: Optional[str] = None
+    meeting_attendee: Optional[str] = None
+    last_conversation_for_reference: Optional[str] = None
+    user_email: Optional[str] = None
+    user_gender: Optional[str] = None
+    user_age: Optional[int] = None
+    greeted: Optional[bool]=False
+
     def is_identified(self) -> bool:
         """Check if the user is identified."""
-        return self.user_name is not None 
+        return self.user_name is not None
 
     def reset(self) -> None:
         """Reset customer information."""
         self.user_name = None
-     
 
     def summarize(self) -> str:
         """Return a summary of the user data."""
@@ -74,31 +80,33 @@ class UserData:
             return f"User: {self.user_name}  Email: {self.user_email} Age : {self.user_age} Gender : {self.user_gender}"
         else:
             return "User not yet identified."
-        
-RunContext_T=RunContext[UserData]
-    
-def run_agent_with_user(user: dict):
-    user_id = user["user_id"]
-    email = user.get("email")
- 
-    print(f"Running agent for user ID: {user_id}, email: {email}")
-    logger.info(f"Running agent for user ID: {user_id}, email: {email}")
-    # Do your custom logic here
-    return f"Agent ran for user {user_id}"
+
+
+RunContext_T = RunContext[UserData]
+
+
 class AppointmentSchedulingAssistant(Agent):
-    def __init__(self,ctx : JobContext) -> None:
-        now = datetime.datetime.now(datetime.timezone.utc).astimezone() # Timezone-aware
-        self.transcriptions : List[str] =[] 
-        self.transcription_buffer : str = ""
+    def __init__(self, ctx: JobContext) -> None:
+        now = datetime.datetime.now(datetime.timezone.utc).astimezone()  # Timezone-aware
+        self.transcriptions: List[str] = []
+        self.transcription_buffer: str = ""
+        self._agent_session: Optional[AgentSession] = None
+        self._ctx = ctx
 
         current_date_str = now.strftime("%A, %B %d, %Y")
-       
-        self.base_instructions=f"""You are a friendly and helpful voice AI assistant designed for managing meetings . 
+
+        self.base_instructions = f"""You are a friendly and helpful voice AI assistant designed for managing meetings .
             The current date and time is {current_date_str}.
             When you first connect,Greet user with a friendly greeting and offer a friendly welcome.for example if users name is Arun Kumar,Hi Arun 
             **CRITICAL INSTRUCTION: Your responses MUST be in plain text only. NEVER use any special formatting, including asterisks, bolding, italics, or bullet points.**
             Do not accept the dates and time in the past suggest them to use in future dates and times.
             Do not read ,refer asterisk symbol in any context.
+            This is a voice conversation — speak naturally, clearly, and concisely. 
+            When the user says hello or greets you, don’t just respond with a greeting — use it as an opportunity to move things forward. 
+            For example, follow up with a helpful question like: 'Would you like to book a time?' 
+            "Always keep the conversation flowing — be proactive, human, and focused on helping the user schedule with ease."
+            If you are proccesing a request then just say let me think or proccesing your request or fetching data wait a moment etc
+            Dont go completely silent when generating response.
             You always ask questions one at a time.
             You warmly greet users, offer a friendly welcome, and are ready to assist with scheduling. 
             You ask details to the user one at a time
@@ -110,91 +118,144 @@ class AppointmentSchedulingAssistant(Agent):
             and have a sense of humor. Your goal is to provide a smooth and efficient user experience for all meeting scheduling needs"""
         super().__init__(instructions=self.base_instructions)
 
+    @property
+    def agent_session(self) -> Optional[AgentSession]:
+        """Safe accessor for the AgentSession created in entrypoint."""
+        return self._agent_session
+
     # all functions annotated with @function_tool will be passed to the LLM when this
     # agent is active
-    # def run_agent_with_user(user_id: str):
-    # # Your logic here
-    #     print(f"Running agent for user: {user_id}")
-    #     # Simulate fetching or processing user data
-    #     user_data = {
-    #         "user_id": user_id,
-    #         "preferences": ["AI", "Python", "FastAPI"]
-    #     }
-    
-    #     # Do something with user_data...
-    #     return f"Processed data for user {user_data['user_id']}"
-    async def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings):  
-        async def process_text():  
-            async for chunk in text:  
-            # Remove markdown formatting  
-                modified_chunk = chunk.replace("*", "").replace("_", "").replace("#", "")  
-                yield modified_chunk  
-  
+
+    async def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings):
+        async def process_text():
+            async for chunk in text:
+                # Remove markdown formatting
+                modified_chunk = chunk.replace("*", "").replace("_", "").replace("#", "")
+                yield modified_chunk
+
         return Agent.default.tts_node(self, process_text(), model_settings)
-    async def append_instructions(self, additional_instructions: str):  
-        """Append new instructions to existing ones."""  
-        current_instructions = self.base_instructions  
-        new_instructions = f"{current_instructions}\n\nAdditional instructions: {additional_instructions}"  
-        await self.update_instructions(new_instructions)  
-        logger.info(new_instructions)
+
+    async def append_instructions(self, additional_instructions: str):
+        """Append new instructions to existing ones."""
+        current_instructions = self.base_instructions
+        new_instructions = f"{current_instructions}\n\nAdditional instructions: {additional_instructions}"
+        try:
+            await self.update_instructions(new_instructions)
+            logger.info("Instructions updated for agent.")
+        except Exception:
+            logger.exception("Failed to update instructions.")
         self.base_instructions = new_instructions  # Keep track for future appends
+
     @function_tool
     async def lookup_weather(self, context: RunContext_T, location: str):
-        """Use this tool to look up current weather information in the given location.
-
-        If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-
-        Args:
-            location: The location to look up weather information for (e.g. city name)
-        """
-
         logger.info(f"Looking up weather for {location}")
-
         return "sunny with a temperature of 70 degrees."
+
     @function_tool
     async def fetch_experts(self, context: RunContext_T, user_requirement: str):
-        """Use this tool to fetch experts from the database based on the user's requirements.
-
-        The tool compares the user's requirement with the speciality of experts and returns a list of matching experts along with their availability. 
-        If no experts match the requirement, the tool should indicate that no suitable expert is available.
-
-        Args:
-            user_requirement: The specific need or topic the user wants expert assistance for (e.g. data engineering, SAP testing)
-        """
-
         logger.info(f"Fetching experts for user requirement: {user_requirement}")
-        experts_db=db.get_all_experts()
-        
-        # Pseudo code to simulate database lookup
-        # In real implementation, replace with actual DB query
-   
-        # matching_experts = [expert for expert in experts_db if user_requirement.lower() in expert["speciality"].lower()]
-
-        # if not matching_experts:
-        #     return f"No experts available for {user_requirement} at the moment."
-
-        # Return experts id and their availability
+        experts_db = db.get_all_experts()
         return experts_db
-    
+
     @function_tool
-    async def get_the_summary_of_user_info(self,context: RunContext_T)-> str:
-        """Used to get the summary of the user Details such as Name, Age, Gender"""
-        # safely extract values with defaults
+    async def get_the_summary_of_user_info(self, context: RunContext_T) -> str:
         name = getattr(context.userdata, "user_name", None) or "Unknown"
         age = getattr(context.userdata, "user_age", None) or "N/A"
         gender = getattr(context.userdata, "user_gender", None) or "Not specified"
-
         return f"User's Name is {name}, Age is {age}, Gender is {gender}."
+
     @function_tool
-    async def get_current_date(self,context : RunContext_T) -> str:
-        """Used to get the current date and time."""
+    async def get_current_date(self, context: RunContext_T) -> str:
         now = datetime.datetime.now()
         return now.strftime("%A, %B %d, %Y at %I:%M %p")
-    
-    async def save_meeting_in_db(self,event_id :str ,user_id:int,expert_id:int,title:str,start_time:str,end_time:str,attendees:list[str]):
-        db.create_appointment(event_id,user_id,expert_id,title,start_time,end_time)
+
+    async def save_meeting_in_db(self, event_id: str, user_id: int, expert_id: int, title: str, start_time: str, end_time: str, attendees: list[str]):
+        db.create_appointment(event_id, user_id, expert_id, title, start_time, end_time)
         return "meeting saved successfully"
-   
+
+    async def handle_track_subscribed(self, track, publication, participant):
+        """
+        Handle room track_subscribed events. Uses internal _agent_session backing field.
+        This method schedules any heavy async work (DB/IO) using asyncio.create_task to avoid blocking.
+        """
+        try:
+            sess = self.agent_session
+            if not sess:
+                logger.warning("[handle_track_subscribed] agent_session not set yet; skipping handling.")
+                return
+
+            # defensive metadata parsing
+            session_guid = None
+            if getattr(participant, "metadata", None):
+                try:
+                    import json
+                    metadata = json.loads(participant.metadata)
+                    session_guid = metadata.get("sessionGuid")
+                except Exception:
+                    logger.exception("[handle_track_subscribed] Failed to parse participant.metadata")
+
+            # populate userdata on agent_session
+            userdata = sess.userdata
+            userdata.user_name = participant.name
+            userdata.user_email = participant.identity
+            userdata.session_guid = session_guid
+
+            # try lookup in DB only when we have an email/identity
+            if userdata.user_email:
+                try:
+                    user_id = db.get_user_by_email(userdata.user_email)
+                    if user_id:
+                        userdata.user_id = user_id
+                        transcript = db.get_transcription(user_id)
+                        userdata.last_conversation_for_reference = transcript
+                    else:
+                        logger.info(f"[handle_track_subscribed] No user row for email {userdata.user_email}")
+                except Exception:
+                    logger.exception("[handle_track_subscribed] DB lookup failed")
+
+            # defaults
+            if userdata.user_age is None:
+                userdata.user_age = 25
+            if userdata.user_gender is None:
+                userdata.user_gender = "MALE"
+                        # proactively greet the user once per session
+            try:
+                #if not getattr(userdata, "greeted", False):
+                #    userdata.greeted = True
+                    greeting = (
+                        f"Hi {userdata.user_name or 'there'}. "
+                        "Welcome back. I can help you schedule meetings — would you like to book a time?"
+                    )
+                    sess = self.agent_session
+                    if sess and hasattr(sess, "generate_reply"):
+                        # schedule coroutine so we don't block the handler
+                        asyncio.create_task(sess.generate_reply(instructions=greeting))
+                    else:
+                        logger.debug("[handle_track_subscribed] session not ready or no generate_reply available")
+            except Exception:
+                logger.exception("[handle_track_subscribed] failed to send proactive greeting")
+
+            # Build short contextual instructions
+            instructions = (
+                f"You are assisting {userdata.user_name or 'Unknown'}, "
+                f"a {userdata.user_age}-year-old {userdata.user_gender}. "
+                f"users email is {userdata.user_email or 'Unknown'}. Use this mail only as attendees mail while scheduling meetings. "
+            )
+            if userdata.last_conversation_for_reference:
+                instructions += (
+                    "Here is the last conversation for context:\n"
+                    "Pick only the key terms from this text and use them as memory "
+                    "while talking with the user:\n"
+                    f"{userdata.last_conversation_for_reference}\n"
+                )
+
+            # schedule append_instructions so the event loop isn't blocked
+            asyncio.create_task(self.append_instructions(instructions))
+            logger.info(f"[handle_track_subscribed] Appended instructions for {userdata.user_name}")
+
+        except Exception:
+            logger.exception("[handle_track_subscribed] Unexpected error")
+
     @function_tool
     async def schedule_meeting(
         self,
@@ -218,34 +279,24 @@ class AppointmentSchedulingAssistant(Agent):
 
         tz = pytz.timezone(timezone)
         try:
-            # FIX: Robustly handle both naive and aware datetime strings.
-            
-            # --- Handle Start Time ---
+            # parse start
             dt_start_obj = datetime.datetime.fromisoformat(start_time)
             if dt_start_obj.tzinfo is None:
-                # It's a naive datetime, so we localize it.
                 start_dt = tz.localize(dt_start_obj)
             else:
-                # It's already an aware datetime, so we just ensure it's in the correct timezone.
                 start_dt = dt_start_obj.astimezone(tz)
-
-            # --- Handle End Time ---
+            # parse end
             dt_end_obj = datetime.datetime.fromisoformat(end_time)
             if dt_end_obj.tzinfo is None:
                 end_dt = tz.localize(dt_end_obj)
             else:
                 end_dt = dt_end_obj.astimezone(tz)
-
         except Exception as e:
-            # This will catch parsing errors or other issues.
             raise ValueError(f"Invalid datetime format. Could not parse '{start_time}'. Error: {e}")
 
-        # Convert to UTC for all internal logic and database storage
         start_utc = start_dt.astimezone(pytz.UTC)
         end_utc = end_dt.astimezone(pytz.UTC)
 
-        # ... the rest of your function remains the same ...
-        
         expert = db.get_expert(expert_id)
         if not expert:
             return f"No expert found with id {expert_id}."
@@ -282,7 +333,6 @@ class AppointmentSchedulingAssistant(Agent):
                 start_time=start_utc.isoformat(),
                 end_time=end_utc.isoformat(),
             )
-            
 
             confirmation_message = (
                 f"Meeting '{title}' successfully created with {expert['name']}.\n"
@@ -292,8 +342,8 @@ class AppointmentSchedulingAssistant(Agent):
             return confirmation_message
 
         except Exception as exc:
-            # logger.exception("Failed to schedule meeting: %s", exc) 
             raise RuntimeError("An unexpected error occurred while scheduling the meeting.") from exc
+
     @function_tool
     async def suggest_slots_for_expert(
         self,
@@ -307,14 +357,12 @@ class AppointmentSchedulingAssistant(Agent):
         import pytz
         import datetime
 
-        # --- Step 1: Validate input ---
         if not expert_id or not desired_start:
             raise ValueError("Missing required arguments: expert_id or desired_start.")
 
         tz = pytz.timezone(timezone)
 
         try:
-            # --- Step 2: Parse desired_start string into aware datetime ---
             dt_desired = datetime.datetime.fromisoformat(desired_start)
             if dt_desired.tzinfo is None:
                 desired_dt = tz.localize(dt_desired)
@@ -323,15 +371,12 @@ class AppointmentSchedulingAssistant(Agent):
         except Exception as e:
             raise ValueError(f"Invalid datetime format for desired_start: {e}")
 
-        # --- Step 3: Convert to UTC for internal use ---
         desired_start_utc = desired_dt.astimezone(pytz.UTC)
 
-        # --- Step 4: Check if expert exists ---
         expert = db.get_expert(expert_id)
         if not expert:
             return f"No expert found with id {expert_id}."
 
-        # --- Step 5: Fetch next available slots from DB ---
         suggested_slots_utc = db.suggest_next_available_slots(
             expert_id,
             desired_start_utc,
@@ -339,11 +384,9 @@ class AppointmentSchedulingAssistant(Agent):
             limit=limit
         )
 
-        # --- Step 6: Handle case when no slots are found ---
         if not suggested_slots_utc:
             return f"No available slots found for expert {expert['name']} after {desired_dt.strftime('%I:%M %p on %b %d')}."
 
-        # --- Step 7: Format output slots in expert's timezone ---
         formatted_slots = []
         for start_utc, end_utc in suggested_slots_utc:
             start_local = start_utc.astimezone(tz)
@@ -352,9 +395,9 @@ class AppointmentSchedulingAssistant(Agent):
                 f"{start_local.strftime('%A, %b %d from %I:%M %p')} to {end_local.strftime('%I:%M %p %Z')}"
             )
 
-        # --- Step 8: Construct final message ---
         formatted_text = "\n".join(f"- {slot}" for slot in formatted_slots)
         return f"Here are the next available time slots for expert {expert['name']}:\n{formatted_text}"
+
     @function_tool
     async def list_meetings_by_date(
         self,
@@ -362,31 +405,6 @@ class AppointmentSchedulingAssistant(Agent):
         date: str,
         max_results: int = 10
     ) -> List[dict] | str:
-        """
-        List meetings scheduled on a specific date from Google Calendar.
-
-        Guidance for LLM:
-            - Always ask the user for the date (format: YYYY-MM-DD).
-            - If the user says "today" or "tomorrow", resolve it to an actual date
-            using the current timezone.
-            - If no meetings are found on that date, politely inform the user.
-            - This tool is especially useful when the user wants to cancel or
-            reschedule a meeting but does not remember the event ID.
-
-        Args:
-            context (RunContext_T): The current run context (not user-supplied).
-            date (str): The date to search for meetings (format YYYY-MM-DD).
-            max_results (int, optional): Maximum number of meetings to list.
-                Defaults to 10.
-
-        Returns:
-            List[dict] | str: A list of meetings with ID, title, start, and end
-                times, or a message if no meetings are found.
-
-        Raises:
-            ValueError: If `date` is empty or not in a valid format.
-            RuntimeError: If there is an unexpected error during retrieval.
-        """
         if not date or not isinstance(date, str):
             raise ValueError("A valid date string (YYYY-MM-DD) must be provided.")
 
@@ -431,33 +449,16 @@ class AppointmentSchedulingAssistant(Agent):
             logger.exception("Error listing meetings for date %s: %s", date, exc)
             raise RuntimeError(
                 "An unexpected error occurred while fetching meetings."
-            ) from exc    
+            ) from exc
+
     @function_tool
     async def list_meetings(
         self,
         context: RunContext_T,
         max_results: int = 10
     ):
-        """
-        List upcoming meetings from Google Calendar.
-
-        Guidance for LLM:
-        - This tool does not require user-provided arguments (except optional `max_results`).
-        - If meetings are found, mention their titles, start dates, and times to the user.
-        - If no meetings are found, politely inform the user.
-        - The default maximum number of results is 10 unless the user specifies otherwise.
-
-        Args:
-            context (RunContext_T): The current run context (not user-supplied).
-            max_results (int, optional): Maximum number of meetings to list. Defaults to 10.
-
-        Returns:
-            list[dict] | str: A list of meeting summaries with ID, title, start, and end times,
-                            or a message saying no meetings are found.
-        """
         try:
             logger.info(f"[list_meetings] Fetching up to {max_results} upcoming meetings from Google Calendar.")
-
             events = calendar_service.list_meetings(max_results)
             logger.debug(f"[list_meetings] Raw events received: {events}")
 
@@ -492,32 +493,6 @@ class AppointmentSchedulingAssistant(Agent):
         date: Optional[str] = None,
         ordinal: Optional[int] = None
     ) -> str | dict:
-        """
-        Cancel a meeting in Google Calendar.
-
-        Guidance for LLM:
-            - If `event_id` is provided, cancel the meeting directly.
-            - If `date` is provided without an `event_id`, list meetings on that day
-            and ask for confirmation.
-            - If the user specifies an ordinal (e.g., "the 1st" or "3rd"), cancel
-            the specific meeting.
-            - If neither `event_id` nor `date` are provided, ask the user for
-            more information.
-
-        Args:
-            context (RunContext_T): The current run context (not user-supplied).
-            event_id (str, optional): The unique ID of the meeting to cancel.
-            date (str, optional): The date (YYYY-MM-DD) to search for meetings to cancel.
-            ordinal (int, optional): The ordinal number (1-based) of the meeting to cancel
-                                    from the list on the given date.
-
-        Returns:
-            str | dict:
-                - Confirmation message if a meeting was cancelled.
-                - A dictionary with a message and a list of meetings if date is provided but no ordinal.
-                - Error message if no meetings are found or ordinal is invalid.
-                - Message asking for more information if no arguments are provided.
-        """
         try:
             if event_id:
                 logger.info(f"[cancel_meeting] Cancelling meeting with ID: {event_id}")
@@ -567,7 +542,7 @@ class AppointmentSchedulingAssistant(Agent):
                 logger.info(f"[cancel_meeting] Found {len(meetings_on_date)} meetings on {date}, awaiting user choice.")
                 return {
                     "message": f"I found {len(meetings_on_date)} meetings on {date}. "
-                            "Please tell me which one to cancel by providing its number.",
+                               "Please tell me which one to cancel by providing its number.",
                     "meetings": meetings_on_date
                 }
 
@@ -586,28 +561,9 @@ class AppointmentSchedulingAssistant(Agent):
         new_start: str,
         new_end: str
     ) -> str:
-        """
-        Reschedule a meeting in Google Calendar.
-
-        Guidance for LLM:
-            - Always provide the `event_id`, `new_start`, and `new_end`.
-            - If any argument is missing, ask politely before calling the tool.
-            Example: "Could you please provide the new start and end time for the meeting?"
-            - If the user says "reschedule my next meeting" without specifying which one,
-            list upcoming meetings and confirm which meeting to move.
-
-        Args:
-            context (RunContext_T): The current run context (not user-supplied).
-            event_id (str): The unique ID of the meeting to reschedule.
-            new_start (str): ISO 8601 formatted new start datetime.
-            new_end (str): ISO 8601 formatted new end datetime.
-
-        Returns:
-            str: Confirmation message with updated meeting link or error message.
-        """
         try:
             logger.info(f"[reschedule_meeting] Attempting to reschedule meeting ID: {event_id}")
-            
+
             if not event_id or not new_start or not new_end:
                 logger.warning("[reschedule_meeting] Missing required arguments.")
                 return "Please provide the meeting ID, new start time, and new end time."
@@ -624,154 +580,76 @@ class AppointmentSchedulingAssistant(Agent):
         except Exception as e:
             logger.error(f"[reschedule_meeting] Error rescheduling meeting {event_id}: {str(e)}", exc_info=True)
             return f"An error occurred while rescheduling the meeting: {str(e)}"
+
+
 def prewarm(proc: JobProcess):
-    proc.userdata["vad"] = silero.VAD.load()
+    """
+    Robust prewarm: attempt to load VAD but don't allow exceptions to kill the child process.
+    """
+    try:
+        proc.userdata["vad"] = silero.VAD.load()
+        logger.info("silero VAD loaded in prewarm.")
+    except Exception:
+        logger.exception("prewarm failed; continuing without VAD.")
+        proc.userdata["vad"] = None
 
 
 async def entrypoint(ctx: JobContext):
     # Initialize user data with context
     userdata = UserData(ctx=ctx)
-    
+
     appointment_scheduling_assistant = AppointmentSchedulingAssistant(ctx)
-    ctx.log_context_fields = {
-        "room": ctx.room.name,
-    }
+    ctx.log_context_fields = {"room": ctx.room.name}
+
     session = AgentSession[UserData](
         userdata=userdata,
         llm=openai.LLM.with_azure(
-        azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"), 
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION"), 
-    ),
-        stt = azure.STT(speech_key=os.getenv("AZURE_SPEECH_KEY"), speech_region=os.getenv("AZURE_SPEECH_REGION"),language="en-IN"),
-        tts = azure.TTS(speech_key=os.getenv("AZURE_SPEECH_KEY"), speech_region=os.getenv("AZURE_SPEECH_REGION"),voice="en-IN-AartiNeural"),
+            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        ),
+        stt=azure.STT(
+            speech_key=os.getenv("AZURE_SPEECH_KEY"),
+            speech_region=os.getenv("AZURE_SPEECH_REGION"),
+            language="en-IN",
+        ),
+        tts=azure.TTS(
+            speech_key=os.getenv("AZURE_SPEECH_KEY"),
+            speech_region=os.getenv("AZURE_SPEECH_REGION"),
+            voice="en-IN-AartiNeural",
+        ),
         turn_detection=MultilingualModel(),
-        vad=ctx.proc.userdata["vad"],
+        vad=ctx.proc.userdata.get("vad"),
         preemptive_generation=True,
     )
-    
-    # @session.on("agent_false_interruption")
-    # def _on_agent_false_interruption(ev: AgentFalseInterruptionEvent):
-    #     logger.info("false positive interruption, resuming")
-    #     session.generate_reply(instructions=ev.extra_instructions or NOT_GIVEN)
-    # usage_collector = metrics.UsageCollector()
-    # @session.on("metrics_collected")
-    # def _on_metrics_collected(ev: MetricsCollectedEvent):
-    #     metrics.log_metrics(ev.metrics)
-    #     logger.info("metrics printed on console -----------------------")
-    #     usage_collector.collect(ev.metrics)
+
+    # give the agent access to the session via backing field
+    appointment_scheduling_assistant._agent_session = session
+
+    # safe room-level handlers
     @ctx.room.on("participant_disconnected")
     def on_participant_disconnected(participant: rtc.RemoteParticipant):
-        """Called when a user leaves the room"""
         logger.info(f"User disconnected: {participant}")
-    @ctx.room.on("participant_connected")
-    def on_participant_connected(participant: rtc.RemoteParticipant):
-        """Called when a user enters the room"""
-        logger.info(f"User Connected: {participant}" )  
 
+    # register track_subscribed to delegate to agent method
     @ctx.room.on("track_subscribed")
-    def on_track_subscribed(
-        track: rtc.Track,
-        publication: rtc.RemoteTrackPublication,
-        participant: rtc.RemoteParticipant,
-    ) -> None:
-        """
-        Event handler triggered when a remote participant's track is subscribed.
+    def _room_track_subscribed(track, publication, participant):
+        asyncio.create_task(
+            appointment_scheduling_assistant.handle_track_subscribed(track, publication, participant)
+        )
 
-        Responsibilities:
-            - Extract and log session metadata (session GUID).
-            - Populate appointment assistant user context (name, email, etc.).
-            - Retrieve and set user-related information from the database.
-            - Generate and append contextual instructions asynchronously.
-
-        Args:
-            track (rtc.Track): The subscribed media track.
-            publication (rtc.RemoteTrackPublication): Publication details.
-            participant (rtc.RemoteParticipant): Remote participant whose track was subscribed.
-        """
-        try:
-            if not appointment_scheduling_assistant:
-                logger.warning("[on_track_subscribed] Appointment scheduling assistant is not initialized.")
-                return
-
-            # Extract session GUID from participant metadata
-            if participant.metadata:
-                import json
-                metadata = json.loads(participant.metadata)
-                session_guid = metadata.get("sessionGuid")
-                if session_guid:
-                    logger.info(f"[on_track_subscribed] Session GUID: {session_guid}")
-                else:
-                    logger.debug("[on_track_subscribed] No session GUID found in metadata.")
-
-            # Update user information in the assistant session
-            user_data = appointment_scheduling_assistant.session.userdata
-            user_data.user_name = participant.name
-            user_data.user_email = participant.identity
-            user_data.session_guid = session_guid
-
-            # Check if the user can be identified
-            if not user_data.is_identified():
-                logger.info(f"[on_track_subscribed] Participant {participant.name} is not yet identified.")
-                return
-
-            # Retrieve user details from the database
-            user_id = db.get_user_by_email(participant.identity)
-            if user_id:
-                user_data.user_id = user_id
-                logger.info(f"[on_track_subscribed] User found: ID={user_id}")
-
-                transcript = db.get_transcription(user_id)
-                user_data.last_conversation_for_reference = transcript
-            else:
-                logger.warning(f"[on_track_subscribed] No user found for email: {participant.identity}")
-                return
-
-            # Assign default user details (could be dynamic later)
-            user_data.user_age = 25
-            user_data.user_gender = "MALE"
-
-            # Build context instructions
-            instructions = (
-                f"You are assisting {user_data.user_name}, "
-                f"a {user_data.user_age}-year-old {user_data.user_gender}. "
-                f"users email is {user_data.user_email}. Use this mail only as attendees mail while scheduling meetings. "
-            )
-
-            if user_data.last_conversation_for_reference:
-                instructions += (
-                    "Here is the last conversation for context:\n"
-                    "Pick only the key terms from this text and use them as memory "
-                    "while talking with the user:\n"
-                    f"{user_data.last_conversation_for_reference}\n"
-                )
-
-            # Append contextual instructions asynchronously
-            asyncio.create_task(
-                appointment_scheduling_assistant.append_instructions(instructions)
-            )
-            logger.info(f"[on_track_subscribed] Instructions appended for user {user_data.user_name}.")
-
-        except Exception as e:
-            logger.error(f"[on_track_subscribed] Error processing subscription: {str(e)}", exc_info=True)
-                 
+    # start the agent session
     await session.start(
         agent=appointment_scheduling_assistant,
         room=ctx.room,
-        room_input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVC(),),
+        room_input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVC(),close_on_disconnect=False),
     )
-    # await ctx.connect()
+    # convers   ation item handler uses the agent_session accessor
     @session.on("conversation_item_added")
     def conversation_item_added(event: ConversationItemAddedEvent):
-        """
-        Handles conversation_item_added events and stores role-based messages
-        (user/assistant) in a single row per session using add_transcription_with_guid.
-        """
         try:
-            # The actual ChatMessage object is inside `event.item`
-            chat_msg = event.item  
-
+            chat_msg = event.item
             role = getattr(chat_msg, "role", None)
             content_list = getattr(chat_msg, "content", None)
 
@@ -779,131 +657,38 @@ async def entrypoint(ctx: JobContext):
                 logger.warning("ChatMessage missing role or content, ignoring item.")
                 return
 
-            # Join content list to single string
             content = " ".join(content_list).strip()
             if not content:
                 logger.warning("Empty content received, ignoring item.")
                 return
 
-            # Get session info
-            user_id = appointment_scheduling_assistant.session.userdata.user_id
-            session_guid = appointment_scheduling_assistant.session.userdata.session_guid
+            sess = appointment_scheduling_assistant.agent_session
+            if not sess:
+                logger.warning("agent_session not yet available; skipping conversation_item_added processing.")
+                return
+
+            user_id = sess.userdata.user_id
+            session_guid = sess.userdata.session_guid
             if not session_guid:
                 logger.warning("No session GUID found for this transcription.")
                 return
 
-            # Prefix message with role
             role_prefix = "user: " if role == "user" else "agent: "
             new_transcription = f"{role_prefix}{content}"
 
             logger.info(f"Handling transcription for session: {session_guid}")
-            # Save to DB using existing method
             db.add_transcription_with_guid(
                 user_id=user_id,
                 new_transcription=new_transcription,
                 session_guid=session_guid
             )
 
-        except Exception as e:
-            logger.error(f"Error processing conversation item: {e}", exc_info=True)
-
-
-        
-    # @session.on("user_input_transcribed")
-    # def on_transcript(transcript):
-    #     """
-    #     Handles incremental transcription updates from user speech input.
-
-    #     This method:
-    #     - Buffers partial speech segments until a sentence is complete.
-    #     - Deduplicates processed text fragments.
-    #     - Stores new transcriptions in DB (tagged by user_id and session GUID).
-    #     - Logs all major steps for observability and debugging.
-
-    #     Args:
-    #         transcript: The transcribed text object with .transcript attribute.
-    #     """
-
-    #     try:
-    #         text = transcript.transcript.strip()
-    #         if not text:
-    #             logger.debug("Received empty transcript — ignoring.")
-    #             return
-
-    #         session_guid = appointment_scheduling_assistant.session.userdata.session_guid
-    #         if not session_guid:
-    #             logger.warning("No session GUID found for this transcription.")
-    #         else:
-    #             logger.info(f"Handling transcription for session: {session_guid}")
-
-    #         # --- Manage transcription buffer ---
-    #         buffer = appointment_scheduling_assistant.transcription_buffer
-    #         text_lower = text.lower()
-
-    #         if buffer and text_lower.startswith(buffer.lower()):
-    #             # Incremental update (overwrite)
-    #             appointment_scheduling_assistant.transcription_buffer = text
-    #         else:
-    #             # New text (append)
-    #             appointment_scheduling_assistant.transcription_buffer = f"{buffer} {text}".strip()
-
-    #         logger.debug(
-    #             f"Updated transcription buffer: "
-    #             f"{appointment_scheduling_assistant.transcription_buffer[:100]}..."
-    #         )
-
-    #         # --- Sentence segmentation ---
-    #         sentences = re.split(
-    #             r'(?<=[.!?])\s+',
-    #             appointment_scheduling_assistant.transcription_buffer.strip()
-    #         )
-
-    #         # Retain last incomplete fragment in buffer
-    #         complete_sentences = sentences[:-1]
-    #         appointment_scheduling_assistant.transcription_buffer = (
-    #             sentences[-1] if sentences else ""
-    #         )
-
-    #         # --- Deduplication setup ---
-    #         processed_transcriptions = getattr(
-    #             appointment_scheduling_assistant, "transcriptions", []
-    #         )
-
-    #         # --- Process each complete sentence ---
-    #         for sentence in complete_sentences:
-    #             clean_sentence = sentence.strip()
-    #             if not clean_sentence:
-    #                 continue
-
-    #             normalized = re.sub(r'\s+', ' ', clean_sentence.lower())
-
-    #             if len(normalized) <= 5:
-    #                 continue  # Skip very short noise fragments
-
-    #             if normalized in processed_transcriptions:
-    #                 logger.debug(f"Duplicate sentence ignored: {clean_sentence}")
-    #                 continue
-
-    #             # New valid transcription
-    #             processed_transcriptions.append(normalized)
-    #             logger.info(f"Processing new transcription: {clean_sentence}")
-
-    #             user_id = getattr(appointment_scheduling_assistant.session.userdata, "user_id", None)
-    #             if not user_id:
-    #                 logger.warning("User ID not found — skipping DB write.")
-    #                 continue
-
-    #             # --- Save to DB (with session GUID) ---
-    #             try:
-    #                 db.add_transcription_with_guid(user_id, clean_sentence, session_guid)
-    #                 logger.info(f"Saved transcription to DB (user_id={user_id}, session_guid={session_guid}).")
-    #             except Exception as db_error:
-    #                 logger.error(f"DB error while saving transcription: {db_error}")
-
-    #     except Exception as e:
-    #         logger.exception(f"Error in on_transcript handler: {e}")
+        except Exception:
+            logger.exception("Error processing conversation item")
 
     if not ctx.room.remote_participants:
         logger.info("No existing participants found - waiting for new connections")
+
+
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm ,drain_timeout=60,initialize_process_timeout=60))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
